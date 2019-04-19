@@ -12,14 +12,15 @@ import (
 
 const (
 	// Timeout for context
-	contextTimeout   = time.Second
+	ContextTimeout   = time.Second
 	dialTimeout      = 5 * time.Second
-	minimumLeaseTime = int64(5)
+	MinimumLeaseTime = int64(5)
+	LeaderKey        = "/elected"
 )
 
 // TakeLease: Provides Lease
 func TakeLease(ctx context.Context, cli *clientv3.Client, duration int64) (lease *clientv3.LeaseGrantResponse) {
-	ctx, cancel := context.WithTimeout(ctx, contextTimeout)
+	ctx, cancel := context.WithTimeout(ctx, ContextTimeout)
 	defer cancel()
 	ctx = clientv3.WithRequireLeader(ctx)
 	lease, err := cli.Grant(ctx, duration)
@@ -32,7 +33,7 @@ func TakeLease(ctx context.Context, cli *clientv3.Client, duration int64) (lease
 
 // InsertKeyWithLease: Inserts key with a lease
 func InsertKeyWithLease(ctx context.Context, cli *clientv3.Client, key, value string, lease *clientv3.LeaseGrantResponse) (resp *clientv3.PutResponse) {
-	ctx, cancel := context.WithTimeout(ctx, contextTimeout)
+	ctx, cancel := context.WithTimeout(ctx, ContextTimeout)
 	defer cancel()
 	ctx = clientv3.WithRequireLeader(ctx)
 	resp, err := cli.Put(ctx, key, value, clientv3.WithLease(lease.ID))
@@ -51,7 +52,7 @@ func KeepAlive(ctx context.Context, cli *clientv3.Client, lease *clientv3.LeaseG
 		if err != nil {
 			zap.L().Error("Keep Alive Error", zap.Error(err))
 		}
-		sleepTime := time.Duration(minimumLeaseTime-2) * time.Second
+		sleepTime := time.Duration(MinimumLeaseTime-2) * time.Second
 		time.Sleep(sleepTime)
 	}
 }
@@ -62,7 +63,7 @@ func KeepAlive(ctx context.Context, cli *clientv3.Client, lease *clientv3.LeaseG
 // PM's to the masters.
 func MasterInsert(cli *clientv3.Client, hostName, ipaddress string) {
 
-	leaseTime := minimumLeaseTime
+	leaseTime := MinimumLeaseTime
 
 	// First Take a Lease to insert a key
 	lease := TakeLease(context.Background(), cli, leaseTime)
@@ -83,6 +84,73 @@ func MasterInsert(cli *clientv3.Client, hostName, ipaddress string) {
 	// Now keep alive
 	go KeepAlive(context.Background(), cli, lease)
 
+}
+
+func WatchLeaderElection(cli *clientv3.Client, hostName string, pipe chan bool) {
+	ctx := clientv3.WithRequireLeader(context.Background())
+	watchChan := cli.Watch(ctx, LeaderKey, clientv3.WithPrevKV(), clientv3.WithFilterPut())
+	for watchResp := range watchChan {
+		if watchResp.Canceled == true {
+			err := watchResp.Err()
+			zap.L().Error("Error in Watch Stream",
+				zap.Error(err),
+			)
+			break
+		}
+		pipe <- true
+		for _, event := range watchResp.Events {
+			zap.L().Info("There is a Leader Event",
+				zap.ByteString("New Leader", event.Kv.Value),
+				zap.ByteString("Old Leader", event.PrevKv.Value),
+			)
+		}
+	}
+}
+
+func SelectLeader(cli *clientv3.Client, hostName string, pipe chan bool) {
+
+	for {
+		zap.L().Info("Starting Leader Election Process")
+		leaseTime := MinimumLeaseTime
+
+		// First Take a Lease to insert a key
+		lease := TakeLease(context.Background(), cli, leaseTime)
+		zap.L().Info("Lease Granted for inserting master key into etcd store",
+			zap.String("Key", hostName),
+			zap.Int64("Duration", leaseTime),
+		)
+
+		// Performing an atomic transaction
+		ctx, cancel := context.WithTimeout(context.Background(), ContextTimeout)
+		defer cancel()
+		ctx = clientv3.WithRequireLeader(ctx)
+		resp, err := cli.Txn(ctx).If(
+			clientv3.Compare(clientv3.Version(LeaderKey), "=", 0),
+		).Then(
+			clientv3.OpPut(LeaderKey, hostName, clientv3.WithLease(lease.ID)),
+		).Commit()
+		if err != nil {
+			zap.L().Error("TXN Error", zap.Error(err))
+		}
+
+		if resp.Succeeded == true {
+			zap.L().Info("Leader is Selected",
+				zap.String("Leader Name", hostName),
+			)
+			// Now keep alive
+			go KeepAlive(context.Background(), cli, lease)
+			//
+			// TODO:
+			// StartLeaderProcess()
+			var s string
+			fmt.Scanln(&s)
+		} else {
+			zap.L().Info("Leader is Selected, but this is not the selected leader",
+				zap.String("Leader Name", hostName),
+			)
+			_ = <-pipe
+		}
+	}
 }
 
 func main() {
@@ -110,7 +178,14 @@ func main() {
 	}
 	defer cli.Close()
 
+	// Will provide a list of available masters
 	MasterInsert(cli, hostName, ipaddress)
+
+	pipe := make(chan bool)
+	go WatchLeaderElection(cli, hostName, pipe)
+
+	go SelectLeader(cli, hostName, pipe)
+
 	var s string
 	fmt.Scanln(&s)
 }
