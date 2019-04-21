@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+service VM{
+    rpc CreateVM(VMCreateRequest) returns (VMCreateResponse){}
+    rpc DeleteVM(VMDeleteRequest) returns (VMDeleteResponse){}
+    rpc StatusVM(VMStatusRequest) returns (VMStatusResponse){}
+}
+
+message VMCreateRequest{
+    string VMName = 1;
+    uint32 vcpus = 2;
+    uint32 memory = 3; // memory in GiB
+    uint32 storage = 4;
+    string ImageName = 5;
+}
+
+message VMCreateResponse{
+    string VMId = 1;
+}
+
+message VMDeleteRequest{
+    string VMId = 1;
+}
+
+message VMDeleteResponse{
+    bool accepted = 1;
+}
+
+message VMStatusRequest{
+    string VMId = 1;
+}
+
+message VMStatusResponse{
+    VMCreateRequest vm = 1;
+    string VMId = 2;
+    enum Status{
+        PENDING = 0;
+        CREATING = 1;
+        CREATED = 2;
+        SUSPENDED = 3;
+        MIGRATING = 4;
+        DELETE_PENDING = 5;
+        DELETING = 6; 
+    }
+    Status status = 3; 
+    string ipaddress = 4;
+}

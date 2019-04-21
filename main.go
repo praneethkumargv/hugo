@@ -16,51 +16,15 @@ const (
 	dialTimeout      = 5 * time.Second
 	MinimumLeaseTime = int64(5)
 	LeaderKey        = "/elected"
+	ControllerPort   = 8080
+	LeaderPort       = 8081
 )
-
-// TakeLease: Provides Lease
-func TakeLease(ctx context.Context, cli *clientv3.Client, duration int64) (lease *clientv3.LeaseGrantResponse) {
-	ctx, cancel := context.WithTimeout(ctx, ContextTimeout)
-	defer cancel()
-	ctx = clientv3.WithRequireLeader(ctx)
-	lease, err := cli.Grant(ctx, duration)
-	if err != nil {
-		zap.L().Error("Lease Error", zap.Error(err))
-	}
-	zap.L().Info("Lease Granted")
-	return
-}
-
-// InsertKeyWithLease: Inserts key with a lease
-func InsertKeyWithLease(ctx context.Context, cli *clientv3.Client, key, value string, lease *clientv3.LeaseGrantResponse) (resp *clientv3.PutResponse) {
-	ctx, cancel := context.WithTimeout(ctx, ContextTimeout)
-	defer cancel()
-	ctx = clientv3.WithRequireLeader(ctx)
-	resp, err := cli.Put(ctx, key, value, clientv3.WithLease(lease.ID))
-	if err != nil {
-		zap.L().Error("Insert Error", zap.Error(err))
-	}
-	zap.L().Info("Key is inserted")
-	return
-}
-
-// KeepAlive: Keeps Alive the lease
-func KeepAlive(ctx context.Context, cli *clientv3.Client, lease *clientv3.LeaseGrantResponse) {
-	for {
-		ctx = clientv3.WithRequireLeader(ctx)
-		_, err := cli.KeepAliveOnce(ctx, lease.ID)
-		if err != nil {
-			zap.L().Error("Keep Alive Error", zap.Error(err))
-		}
-		sleepTime := time.Duration(MinimumLeaseTime-2) * time.Second
-		time.Sleep(sleepTime)
-	}
-}
 
 // masterInsert inserts the master_$(hostname) key into etcd store
 // periodically with a lease. This will tell which master hosts are
 // currently online, so the leader can decide the partition of the
 // PM's to the masters.
+// KEY: master_$(hostName) VALUE: ipaddress
 func MasterInsert(cli *clientv3.Client, hostName, ipaddress string) {
 
 	leaseTime := MinimumLeaseTime
@@ -83,10 +47,10 @@ func MasterInsert(cli *clientv3.Client, hostName, ipaddress string) {
 
 	// Now keep alive
 	go KeepAlive(context.Background(), cli, lease)
-
+	zap.L().Info("Master Key is inserted and it's lease will be updated periodically")
 }
 
-func WatchLeaderElection(cli *clientv3.Client, hostName string, pipe chan bool) {
+func WatchLeaderElection(cli *clientv3.Client, hostName string, pipe, mast, lead chan bool) {
 	ctx := clientv3.WithRequireLeader(context.Background())
 	watchChan := cli.Watch(ctx, LeaderKey, clientv3.WithPrevKV(), clientv3.WithFilterPut())
 	for watchResp := range watchChan {
@@ -98,6 +62,8 @@ func WatchLeaderElection(cli *clientv3.Client, hostName string, pipe chan bool) 
 			break
 		}
 		pipe <- true
+		mast <- true
+		lead <- true
 		for _, event := range watchResp.Events {
 			zap.L().Info("There is a Leader Event",
 				zap.ByteString("New Leader", event.Kv.Value),
@@ -107,7 +73,8 @@ func WatchLeaderElection(cli *clientv3.Client, hostName string, pipe chan bool) 
 	}
 }
 
-func SelectLeader(cli *clientv3.Client, hostName string, pipe chan bool) {
+// Leader KEY: /elected VALUE: hostName
+func SelectLeader(cli *clientv3.Client, hostName string, pipe, lead chan bool) {
 
 	for {
 		zap.L().Info("Starting Leader Election Process")
@@ -141,7 +108,7 @@ func SelectLeader(cli *clientv3.Client, hostName string, pipe chan bool) {
 			go KeepAlive(context.Background(), cli, lease)
 			//
 			// TODO:
-			// StartLeaderProcess()
+			StartLeaderProcess(cli, lead)
 			var s string
 			fmt.Scanln(&s)
 		} else {
@@ -149,6 +116,7 @@ func SelectLeader(cli *clientv3.Client, hostName string, pipe chan bool) {
 				zap.String("Leader Name", hostName),
 			)
 			_ = <-pipe
+			_ = <-lead
 		}
 	}
 }
@@ -156,8 +124,8 @@ func SelectLeader(cli *clientv3.Client, hostName string, pipe chan bool) {
 func main() {
 
 	// TODO: This values should also be received from config file
-	hostName := "praneeth"
-	ipaddress := "localhost:8888"
+	const hostName = "praneeth"
+	const ipaddress = "localhost"
 
 	// Created logger and made the logger pacakge global
 	logger, err := zap.NewDevelopment()
@@ -180,12 +148,20 @@ func main() {
 
 	// Will provide a list of available masters
 	MasterInsert(cli, hostName, ipaddress)
-
+	// For Leader Selection
 	pipe := make(chan bool)
-	go WatchLeaderElection(cli, hostName, pipe)
+	// For Leader Updation
+	mast := make(chan bool)
+	// For Leader Termination
+	lead := make(chan bool)
 
-	go SelectLeader(cli, hostName, pipe)
+	//Will see if there is any change in leader status
+	go WatchLeaderElection(cli, hostName, pipe, mast, lead)
+	//Will select the leader if there is no new leader
+	go SelectLeader(cli, hostName, pipe, lead)
 
+	//Will be the endpoint for the client to make VM create and delete requests
+	Controller(cli, lead, hostName)
 	var s string
 	fmt.Scanln(&s)
 }
