@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+message PM{
+    string PMName = 1;
+    uint32 vcpu = 2;
+    uint32 memory = 3;
+    string ipaddress = 4;
+    uint32 storage = 5;
+    string username = 6;
+    string password = 7;
+    bool state = 8;
+}
+
+message VMONPM{
+    repeated string VMId = 1;
+}
+
+message MigratingToPM{
+    repeated string VMId = 1;
+}
+
+message FailedPM{
+    repeated string PMId = 1;
+}
+
+message Partition{
+    repeated string ipaddress = 1;
+}

@@ -96,3 +96,32 @@ func InsertKeyIfKeyNotPresent(cli *clientv3.Client, key, value string) bool {
 	)
 	return false
 }
+
+func AtomicKeyInsertion(cli *clientv3.Client, cs clientv3.Cmp, opts ...clientv3.Op) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), ContextTimeout)
+	defer cancel()
+	ctx = clientv3.WithRequireLeader(ctx)
+	// TODO:
+	txnResp, err := cli.Txn(ctx).If(cs).Then(opts...).Commit()
+	if err != nil {
+		zap.L().Error("TXN Error", zap.Error(err))
+	}
+	if txnResp.Succeeded == true {
+		zap.L().Info("Keys are Inserted")
+		return true
+	}
+	zap.L().Info("Keys are not Inserted")
+	return false
+}
+
+func GetKeyRangeResp(cli *clientv3.Client, key, end string) (resp *clientv3.GetResponse) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*ContextTimeout)
+	defer cancel()
+	ctx = clientv3.WithRequireLeader(ctx)
+	resp, err := cli.Get(ctx, key, clientv3.WithLimit(0), clientv3.WithRange(end))
+	if err != nil {
+		zap.L().Error("Get Error", zap.Error(err))
+	}
+	zap.L().Info("GET Response for a given key is returned")
+	return
+}

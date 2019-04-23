@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+service leader{
+    rpc CreateNewVM(CreateNewVMRequest) returns(CreateNewVMResponse){}
+    rpc DeleteVM(DeleteVMRequest) returns(DeleteVMResponse){}
+    rpc RetrieveStateChanges(StateRequest) returns(StateResponse){}
+    rpc SendStateUpdate(StateUpdateRequest) returns (StateUpdateResponse){}
+    rpc MigrateVM(MigrateVMRequest) returns(MigrateVMResponse){}
+}
+
+message PMInformation{
+    string PMId = 1;
+    uint32 capacityCpu = 2;
+    uint32 capacityMemory = 3;
+    uint32 slackCpu = 4;
+    uint32 slackMemory = 5;
+    uint32 number = 6;
+    bool state = 7;
+}
+
+message CreateNewVMRequest{
+    string VMId = 1; // vm_(64bitid)
+    string PMId = 2; // pm_(64bitid)
+    uint32 pcpu = 3;
+    uint32 pmemory = 4;
+}
+
+message CreateNewVMResponse{
+    bool accepted = 1;
+}
+
+message DeleteVMRequest{
+    string VMId = 1;
+}
+
+message DeleteVMResponse{
+    bool accepted = 1;
+}
+
+message StateRequest{
+    uint32 numOn = 1;
+    uint32 numOff = 2;
+}
+
+message StateResponse{
+    repeated PMInformation pm = 1;
+}
+
+message StateUpdateRequest{
+    string PMId = 1;
+    uint32 slackCpu = 2;
+    uint32 slackMemory = 3;
+}
+
+message StateUpdateResponse{
+    bool accepted = 1;
+}
+
+message MigrateVMRequest{
+    repeated CreateNewVMRequest assigned = 1;
+}
+
+message MigrateVMResponse{
+    bool accepted = 1;
+}
+
+// send poweroff request

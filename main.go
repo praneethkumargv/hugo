@@ -108,7 +108,7 @@ func SelectLeader(cli *clientv3.Client, hostName string, pipe, lead chan bool) {
 			go KeepAlive(context.Background(), cli, lease)
 			//
 			// TODO:
-			StartLeaderProcess(cli, lead)
+			StartLeaderProcess(cli, lead, hostName)
 			var s string
 			fmt.Scanln(&s)
 		} else {
@@ -159,9 +159,11 @@ func main() {
 	go WatchLeaderElection(cli, hostName, pipe, mast, lead)
 	//Will select the leader if there is no new leader
 	go SelectLeader(cli, hostName, pipe, lead)
+	// For Partition Updates periodically
+	go MasterUpdation(mast)
 
 	//Will be the endpoint for the client to make VM create and delete requests
-	Controller(cli, lead, hostName)
+	Controller(cli, mast, hostName)
 	var s string
 	fmt.Scanln(&s)
 }

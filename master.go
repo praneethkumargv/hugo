@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"google.golang.org/grpc"
@@ -17,9 +18,10 @@ import (
 )
 
 const (
-	schedulingQueueLength = 1000 // the buffer for scheduling queue
-	noOfReadRPCs          = 10
-	uniqueIdLength        = 64
+	schedulingQueueLength   = 1000 // the buffer for scheduling queue
+	noOfReadRPCs            = 10
+	uniqueIdLength          = 64
+	partitionUpdateInterval = 10 * time.Second
 )
 
 var (
@@ -163,6 +165,11 @@ func CheckLeader(cli *clientv3.Client, lead chan bool, hostName string) {
 		_ = <-lead
 		zap.L().Info("There is a change in a Leader")
 	}
+}
+
+func MasterUpdation(mast chan bool) {
+	time.Sleep(partitionUpdateInterval)
+	mast <- true
 }
 
 func MasterServer(cli *clientv3.Client, hostName string, queue chan string) {
