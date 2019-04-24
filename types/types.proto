@@ -19,10 +19,6 @@ message MigratingToPM{
     repeated string VMId = 1;
 }
 
-message FailedPM{
-    repeated string PMId = 1;
-}
-
 message Partition{
     repeated string ipaddress = 1;
 }

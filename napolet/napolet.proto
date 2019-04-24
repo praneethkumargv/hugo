@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+service Ping{
+    rpc CreateVM(CreateVMRequest) returns(CreateVMResponse){}
+    rpc DeleteVM(DeleteVMRequest) returns(DeleteVMResponse){}
+    rpc GetStat(Dummy) returns(Stat){}
+}
+
+message Dummy{
+    
+}
+
+message CreateVMRequest{
+    string VMName = 1;
+    uint32 vcpus = 2;
+    uint32 memory = 3; // memory in GiB
+    uint32 storage = 4;
+    string ImageName = 5;
+    string VMId = 6;
+    string PMId = 7;
+}
+
+message CreateVMResponse{
+    bool accepted = 1;
+}
+
+message DeleteVMRequest{
+    string VMId = 1;
+}
+
+message DeleteVMResponse{
+    bool accepted = 1;
+}
+
+message VMStat{
+    string VMId = 1;
+    string state = 2; // Created or Suspended only
+    string PredictedCpu = 3;
+    string PredictedMemory = 4;
+}
+
+message PMStat{
+    string PMId = 1;
+    uint32 TotalMemory = 2;
+    uint32 TotalCpu = 3;
+    uint32 SlackCpu = 4;
+    uint32 SlackMemory = 5;
+}
+
+message Stat{
+    PMStat PM = 1;
+    repeated VMStat VMS = 2;
+}

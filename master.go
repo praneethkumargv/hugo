@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc"
 
 	pb "napoleon/controller"
+	pbtype "napoleon/types"
 
 	clientv3 "go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
@@ -25,8 +26,9 @@ const (
 )
 
 var (
-	leader, partition string // should need to discuss about partition format
-	mu                sync.Mutex
+	leader    string
+	partition pbtype.Partition // should need to discuss about partition format
+	mu        sync.Mutex
 )
 
 type VM struct {
@@ -142,6 +144,7 @@ func CheckLeader(cli *clientv3.Client, lead chan bool, hostName string) {
 	for {
 		resp := GetKeyResp(context.Background(), cli, LeaderKey)
 
+		// should use reader and writer lock
 		mu.Lock()
 		leader = getKeyValue(resp)
 		mu.Unlock()
@@ -154,7 +157,9 @@ func CheckLeader(cli *clientv3.Client, lead chan bool, hostName string) {
 		resp = GetKeyResp(context.Background(), cli, partitionKey)
 
 		mu.Lock()
-		partition = getKeyValue(resp)
+		temp := getKeyValue(resp)
+		error := proto.Unmarshal([]byte(temp), &partition)
+		zap.L().Error("Error in Unmarshalling", zap.Error(error))
 		mu.Unlock()
 
 		zap.L().Info("Partition Information is known",
