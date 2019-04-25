@@ -29,6 +29,7 @@ var (
 	leader    string
 	partition pbtype.Partition // should need to discuss about partition format
 	mu        sync.Mutex
+	sched     sync.Mutex
 )
 
 type VM struct {
@@ -69,7 +70,11 @@ func (v *VM) CreateVM(ctx context.Context, req *pb.VMCreateRequest) (resp *pb.VM
 	}
 	resp = &pb.VMCreateResponse{VMId: vm.VMId}
 
+	sched.Lock()
+	v.queue <- string(1)
 	v.queue <- vminfo
+	sched.Unlock()
+
 	zap.L().Info("Inserted into scheduling queue and in pending state")
 	return
 }
@@ -103,7 +108,11 @@ func (v *VM) DeleteVM(ctx context.Context, req *pb.VMDeleteRequest) (*pb.VMDelet
 		zap.L().Info("Key is inserted",
 			zap.String("Key", key),
 		)
+		sched.Lock()
+		v.queue <- string(2)
 		v.queue <- string(newValue)
+		sched.Unlock()
+
 	}
 	return &pb.VMDeleteResponse{Accepted: true}, nil
 }
@@ -201,7 +210,7 @@ func Controller(cli *clientv3.Client, lead chan bool, hostName string) {
 	// TODO:
 	go Scheduler(cli, schedulingQueue)
 	// TODO:
-	go ReadRPC(cli)
+	go ReadRPC(cli, schedulingQueue)
 
 	// TODO: now create grpc server
 	MasterServer(cli, hostName, schedulingQueue)

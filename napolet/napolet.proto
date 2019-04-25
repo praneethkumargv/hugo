@@ -35,8 +35,8 @@ message DeleteVMResponse{
 message VMStat{
     string VMId = 1;
     string state = 2; // Created or Suspended only
-    string PredictedCpu = 3;
-    string PredictedMemory = 4;
+    uint32 PredictedCpu = 3;
+    uint32 PredictedMemory = 4;
 }
 
 message PMStat{

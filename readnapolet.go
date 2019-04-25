@@ -8,6 +8,7 @@ import (
 	pbl "napoleon/leader"
 	pb "napoleon/napolet"
 
+	"github.com/golang/protobuf/proto"
 	clientv3 "go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -22,10 +23,10 @@ const (
 	napoletport = 8799
 )
 
-func ReadRPC(cli *clientv3.Client) {
+func ReadRPC(cli *clientv3.Client, squeue chan string) {
 	tunnel := make(chan string)
 	for i := 0; i < noOfReadRPCs; i++ {
-		go TalkToNapolet(cli, tunnel)
+		go TalkToNapolet(cli, tunnel, squeue)
 	}
 	for {
 		mu.Lock()
@@ -88,7 +89,7 @@ func CreateConnectionLeader(pmid string, smem, scpu uint32) {
 	SendStateUpdate(client, pmid, smem, scpu)
 }
 
-func InformLeader(stat *pb.Stat) {
+func InformLeader(stat *pb.Stat, squeue chan string) {
 	var smem, scpu uint32
 	if stat.PM.SlackMemory == 0 || stat.PM.SlackCpu == 0 {
 		smem = 0
@@ -98,9 +99,17 @@ func InformLeader(stat *pb.Stat) {
 		scpu = stat.PM.SlackCpu
 	}
 	CreateConnectionLeader(stat.PM.PMId, smem, scpu)
+	if smem == 0 || scpu == 0 {
+		sched.Lock()
+		squeue <- string(3)
+		value, error := proto.Marshal(stat)
+		zap.L().Error("Error in Marshalling", zap.Error(error))
+		squeue <- string(value)
+		sched.Unlock()
+	}
 }
 
-func TalkToNapolet(cli *clientv3.Client, tunnel chan string) {
+func TalkToNapolet(cli *clientv3.Client, tunnel, squeue chan string) {
 	for {
 		ipaddress := <-tunnel
 		stat := CreateConnectionSlave(cli, ipaddress)
@@ -111,6 +120,6 @@ func TalkToNapolet(cli *clientv3.Client, tunnel chan string) {
 				changeStateOfVM(cli, vm.VMId, pbc.VMStatusResponse_SUSPENDED)
 			}
 		}
-		InformLeader(stat)
+		InformLeader(stat, squeue)
 	}
 }
