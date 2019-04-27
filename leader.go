@@ -30,22 +30,35 @@ var (
 	muoff     sync.Mutex
 	muon      sync.Mutex
 	etcdstore sync.Mutex
+	pmtovm    sync.Mutex
+	pmstate   sync.Mutex
+	pmmigrate sync.Mutex
 	offqueue  = make(PriorityQueue, 0)
 )
 
+// Master Hostname should be like "s1" to "s9"
 func Partition(cli *clientv3.Client) {
-
+	// TODO: CHANGE ONLY NO OF PMS WERE ON
 	for {
+		start := time.Now()
+
 		muoff.Lock()
 		muon.Lock()
 		zap.L().Info("Starting partition")
+		zap.L().Debug("Trying to start partitioning the available physical machines to available masters")
 		key := "pm_" + string(MinUint)
 		end := "pm_" + string(MaxUint)
-		zap.L().Info("Key Starting and Ending", zap.String("Start", key), zap.String("End", end))
+		zap.L().Info("Key Starting and Ending",
+			zap.String("Start", key),
+			zap.String("End", end),
+		)
 
 		resp := GetKeyRangeResp(cli, key, end)
-
 		values := resp.Kvs
+		zap.L().Debug("No of Values returned from range response from Physical Machine(PM)",
+			zap.Int("No of PM's", len(values)),
+		)
+
 		var arroff, arron []pbtype.PM
 		var keyoff []string
 		for _, value := range values {
@@ -63,20 +76,31 @@ func Partition(cli *clientv3.Client) {
 
 		}
 		noOfPM := len(arron)
-		zap.L().Info("Found no of PM's", zap.Int("Number of Physical Machines", noOfPM))
+		zap.L().Info("Found no of PM's that are Powered ON",
+			zap.Int("Number of Physical Machines", noOfPM),
+		)
+		zap.L().Info("Found these no of systems are powered off",
+			zap.Int("Powered Off PM's", len(arroff)),
+		)
 
 		key = "master_s" + string(1)
 		end = "master_s" + string(9)
-		zap.L().Info("Master Starting and Ending", zap.String("Start", key), zap.String("End", end))
+		zap.L().Info("Master Starting and Ending",
+			zap.String("Start", key),
+			zap.String("End", end),
+		)
 
 		masterResp := GetKeyRangeResp(cli, key, end)
-		noOfMaster := len(masterResp.Kvs)
-		zap.L().Info("Found no of Masters", zap.Int("Number of masters", noOfMaster))
-
-		noOfIp := math.Ceil(float64(noOfPM) / float64(noOfMaster))
-		zap.L().Info("Found no of IP's", zap.Float64("Number of PM's per Master", noOfIp))
-
 		masters := masterResp.Kvs
+		noOfMasters := len(masters)
+		zap.L().Info("Found no of Masters",
+			zap.Int("Number of masters", noOfMasters),
+		)
+
+		noOfIp := math.Ceil(float64(noOfPM) / float64(noOfMasters))
+		zap.L().Info("Found no of IP's",
+			zap.Float64("Number of PM's per Master", noOfIp),
+		)
 
 		i := 0
 		for _, master := range masters {
@@ -84,21 +108,31 @@ func Partition(cli *clientv3.Client) {
 			for j := 0; j < int(noOfIp) && i < noOfPM; j++ {
 				partition.Ipaddress = append(partition.Ipaddress, arron[i].Ipaddress)
 				i++
+				zap.L().Debug("Mapping of Partition",
+					zap.String("partition_"+string(master.Value), partition.Ipaddress[j]),
+				)
 			}
 			out, err := proto.Marshal(&partition)
 			if err != nil {
 				zap.L().Error("Marshalling Error", zap.Error(err))
 			}
+
 			//KEY: partition_$(hostname) VALUE: protobuf of IPAddress
 			key := "partition_" + string(master.Value)
+			zap.L().Debug("Trying to insert 'partition_$(hostname) key'",
+				zap.String("Partition Key", key),
+			)
 			value := string(out)
 			resp := InsertKey(cli, key, value)
-			zap.L().Debug("The returned response is", zap.Any("Response", resp))
+			zap.L().Debug("The returned response is",
+				zap.Any("Response", resp),
+			)
 			zap.L().Info("Key is inserted",
 				zap.String("Key", key),
 			)
 		}
 
+		zap.L().Debug("Trying to insert all the OFF PM's into Heap for use")
 		offqueue := make(PriorityQueue, 0)
 		for i, offpm := range arroff {
 			item := &Item{
@@ -110,10 +144,19 @@ func Partition(cli *clientv3.Client) {
 			}
 			offqueue = append(offqueue, item)
 		}
+		zap.L().Debug("Trying to initiate the Heap with OFF PM's",
+			zap.Int("No of Off PM's", len(offqueue)),
+		)
 		heap.Init(&offqueue)
+		zap.L().Debug("All OFF PM's are inserted into Heap")
 		muon.Unlock()
 		muoff.Unlock()
 
+		elapsed := time.Since(start)
+		zap.L().Info("Time Taken for Partiton is ",
+			zap.Duration("Partition Time Elapsed", elapsed),
+		)
+		zap.L().Debug("Sleeping until next period for partition")
 		time.Sleep(partitionUpdateInterval)
 	}
 
@@ -126,6 +169,9 @@ type LeaderServer struct {
 }
 
 func changeStateOfVM(client *clientv3.Client, vmkey string, status pbc.VMStatusResponse_Status) {
+	zap.L().Debug("Trying to change the state of VM to ",
+		zap.Any("To State", status),
+	)
 	resp := GetKeyResp(context.Background(), client, vmkey)
 	value := getKeyValue(resp)
 	var temp pbc.VMStatusResponse
@@ -134,7 +180,9 @@ func changeStateOfVM(client *clientv3.Client, vmkey string, status pbc.VMStatusR
 		zap.L().Error("Unmarshalling Error", zap.Error(error))
 	}
 
+	zap.L().Debug("Present Status", zap.Any("Status", temp.Status))
 	temp.Status = status
+	zap.L().Debug("After Status", zap.Any("Status", temp.Status))
 
 	out, err := proto.Marshal(&temp)
 	if err != nil {
@@ -149,6 +197,10 @@ func changeStateOfVM(client *clientv3.Client, vmkey string, status pbc.VMStatusR
 }
 
 func insertVMToPMMapping(client *clientv3.Client, vmkey string, pmkey string) {
+	zap.L().Debug("Creating relation between vm and pm",
+		zap.String("VMId", vmkey),
+		zap.String("PMId", pmkey),
+	)
 	vmkey = vmkey + "_on"
 	value := pmkey
 	resp := InsertKey(client, vmkey, value)
@@ -159,6 +211,10 @@ func insertVMToPMMapping(client *clientv3.Client, vmkey string, pmkey string) {
 }
 
 func insertVMToPMMappingMigrating(client *clientv3.Client, vmkey string, pmkey string) {
+	zap.L().Debug("Inserting relation between VM to PM for migating",
+		zap.String("Virtual machine Id", vmkey),
+		zap.String("Physical Machine Id", pmkey),
+	)
 	vmkey = "migrating_" + vmkey
 	value := pmkey
 	resp := InsertKey(client, vmkey, value)
@@ -169,8 +225,18 @@ func insertVMToPMMappingMigrating(client *clientv3.Client, vmkey string, pmkey s
 }
 
 func insertPMToVMMapping(client *clientv3.Client, vmkey string, pmkey string) {
+	zap.L().Debug("Creating relation between pm and vm",
+		zap.String("Physical Machine Id", pmkey),
+		zap.String("Virtuall Machine Id", vmkey),
+	)
+
 	var list pbtype.VMONPM
 	key := "on_" + pmkey
+
+	// Because another thread can be changing the pm to vm mapping
+	// TODO: LOCKING ON KEY LEVEL SHOULD BE DONE
+	pmtovm.Lock()
+	defer pmtovm.Unlock()
 	resp := GetKeyResp(context.Background(), client, key)
 	if isKeyPresent(resp) {
 		value := getKeyValue(resp)
@@ -196,8 +262,14 @@ func insertPMToVMMapping(client *clientv3.Client, vmkey string, pmkey string) {
 }
 
 func insertPMToVMMappingMigrating(client *clientv3.Client, vmkey string, pmkey string) {
+	zap.L().Debug("Inserting relation between VM to PM for migating",
+		zap.String("Physical Machine Id", pmkey),
+		zap.String("Virtual machine Id", vmkey),
+	)
 	var list pbtype.VMONPM
 	key := "migrating_" + pmkey
+	pmmigrate.Lock()
+	defer pmmigrate.Unlock()
 	resp := GetKeyResp(context.Background(), client, key)
 	if isKeyPresent(resp) {
 		value := getKeyValue(resp)
@@ -223,6 +295,11 @@ func insertPMToVMMappingMigrating(client *clientv3.Client, vmkey string, pmkey s
 }
 
 func changePhysicalMachineState(client *clientv3.Client, pmkey string, state bool) {
+	zap.L().Debug("Trying to change the state of PM",
+		zap.Bool("State ON or OFF", state),
+	)
+	pmstate.Lock()
+	defer pmstate.Unlock()
 	resp := GetKeyResp(context.Background(), client, pmkey)
 	value := getKeyValue(resp)
 	var temp pbtype.PM
@@ -231,7 +308,9 @@ func changePhysicalMachineState(client *clientv3.Client, pmkey string, state boo
 		zap.L().Error("Unmarshalling Error", zap.Error(error))
 	}
 
+	zap.L().Debug("Present Status", zap.Any("Status", temp.State))
 	temp.State = state
+	zap.L().Debug("After Status", zap.Any("Status", temp.State))
 
 	out, err := proto.Marshal(&temp)
 	if err != nil {
@@ -247,15 +326,26 @@ func changePhysicalMachineState(client *clientv3.Client, pmkey string, state boo
 
 func (leader *LeaderServer) CreateNewVM(ctx context.Context, req *pb.CreateNewVMRequest) (*pb.CreateNewVMResponse, error) {
 	var temp []*Item
+
 	vmid := req.VMId
 	pmid := req.PMId
 	pcpu := req.Pcpu
 	pmem := req.Pmemory
+	zap.L().Debug("VMCreate Request came for",
+		zap.String("vmid", vmid),
+		zap.String("pmid", pmid),
+		zap.Uint32("CPU", pcpu),
+		zap.Uint32("Memory", pmem),
+	)
 	done := false
 	anotherOnPM := false
 	var check *Item
+
+	zap.L().Debug("Trying to get hold on ONQueue")
 	muon.Lock()
-	for i := 0; i < TopOnElements; i++ {
+	zap.L().Debug("Got lock on OnQueue")
+	length := len(leader.onqueue)
+	for i := 0; i < TopOnElements && i < length; i++ {
 		check = heap.Pop(&leader.onqueue).(*Item)
 		if check.PMId == pmid && check.scpu >= pcpu && check.smemory >= pmem {
 			zap.L().Info("Found the necessary PM",
@@ -281,8 +371,10 @@ func (leader *LeaderServer) CreateNewVM(ctx context.Context, req *pb.CreateNewVM
 		heap.Push(&leader.onqueue, *itemptr)
 	}
 	muon.Unlock()
+	zap.L().Debug("Lock Released on ONQueue")
 
 	if done == true {
+		zap.L().Debug("Found a ON PM")
 		// changing state of Virtual Machine
 		changeStateOfVM(leader.client, vmid, pbc.VMStatusResponse_CREATING)
 
@@ -293,10 +385,14 @@ func (leader *LeaderServer) CreateNewVM(ctx context.Context, req *pb.CreateNewVM
 		insertPMToVMMapping(leader.client, vmid, check.PMId)
 
 	} else if anotherOnPM == false {
+		zap.L().Info("Can't find a ON PM, falling back to OFF PM")
 		temp = make([]*Item, 0)
 		var onPM *Item
+		zap.L().Debug("Trying to Get Lock on Off queue")
 		muoff.Lock()
-		for i := 0; i < TopOffElements; i++ {
+		zap.L().Debug("Locked OFF queue")
+		length := len(leader.offqueue)
+		for i := 0; i < TopOffElements && i < length; i++ {
 			check := heap.Pop(&leader.offqueue).(*Item)
 			if check.PMId == pmid && check.scpu >= pcpu && check.smemory >= pmem {
 				zap.L().Info("Found the necessary PM",
@@ -319,11 +415,16 @@ func (leader *LeaderServer) CreateNewVM(ctx context.Context, req *pb.CreateNewVM
 		for _, itemptr := range temp {
 			heap.Push(&leader.offqueue, *itemptr)
 		}
+		zap.L().Debug("Unlocking OFF queue")
 		muoff.Unlock()
+		zap.L().Debug("Unlocked OFF queue")
 
 		muon.Lock()
 		//changing the state of Physical Machine
 		changePhysicalMachineState(leader.client, onPM.PMId, true)
+		zap.L().Debug("Inserting the ONed PM to ON Queue",
+			zap.String("Physical Machine Id", onPM.PMId),
+		)
 		heap.Push(&leader.onqueue, &onPM)
 		muon.Unlock()
 
@@ -331,10 +432,10 @@ func (leader *LeaderServer) CreateNewVM(ctx context.Context, req *pb.CreateNewVM
 		changeStateOfVM(leader.client, vmid, pbc.VMStatusResponse_CREATING)
 
 		// inserting vm to pm mapping
-		insertVMToPMMapping(leader.client, vmid, check.PMId)
+		insertVMToPMMapping(leader.client, vmid, onPM.PMId)
 
 		// inserting pm to vm mapping
-		insertPMToVMMapping(leader.client, vmid, check.PMId)
+		insertPMToVMMapping(leader.client, vmid, onPM.PMId)
 	}
 	return &pb.CreateNewVMResponse{Accepted: done}, nil
 }
@@ -342,6 +443,8 @@ func (leader *LeaderServer) CreateNewVM(ctx context.Context, req *pb.CreateNewVM
 func (leader *LeaderServer) DeleteVM(ctx context.Context, req *pb.DeleteVMRequest) (*pb.DeleteVMResponse, error) {
 	done := false
 	vmid := req.VMId
+
+	// TODO: Writers Lock and Readers Lock
 	etcdstore.Lock()
 	value := getKeyValue(GetKeyResp(context.Background(), leader.client, vmid))
 	var temp pbc.VMStatusResponse
@@ -387,16 +490,20 @@ func (leader *LeaderServer) DeleteVM(ctx context.Context, req *pb.DeleteVMReques
 
 // ONLY READING FROM THE DATABASE
 func heapOperation(client *clientv3.Client, queue *PriorityQueue, resp *pb.StateResponse, state bool, noofpm uint32) {
-	var lock sync.Mutex
+	zap.L().Debug("Entered to retrieve Physical Machines", zap.Bool("Queue Name", state))
+	var lock *sync.Mutex
 	var temp []*Item
 	if state == true {
-		lock = muon
+		lock = &muon
 	} else {
-		lock = muoff
+		lock = &muoff
 	}
 
+	zap.L().Debug("Trying to Lock the", zap.Bool("Queue Name", state))
 	lock.Lock()
-	for i := uint32(0); i < noofpm; i++ {
+	defer lock.Unlock()
+	length := len(*queue)
+	for i := uint32(0); i < noofpm && i < uint32(length); i++ {
 		check := heap.Pop(queue).(*Item)
 		temp = append(temp, check)
 		var part pb.PMInformation
@@ -422,7 +529,7 @@ func heapOperation(client *clientv3.Client, queue *PriorityQueue, resp *pb.State
 	for _, itemptr := range temp {
 		heap.Push(queue, *itemptr)
 	}
-	lock.Lock()
+	zap.L().Debug("Trying to UnLock the", zap.Bool("Queue Name", state))
 }
 
 func (leader *LeaderServer) RetrieveStateChanges(ctx context.Context, req *pb.StateRequest) (*pb.StateResponse, error) {
@@ -447,8 +554,10 @@ func (leader *LeaderServer) SendStateUpdate(ctx context.Context, req *pb.StateUp
 	smemory := req.SlackMemory
 	done := false
 	muon.Lock()
+	defer muon.Unlock()
 	for i, node := range leader.onqueue {
 		if node.PMId == pmid {
+			zap.L().Info("Found the given pmid in ONQueue")
 			node.scpu = scpu
 			node.smemory = smemory
 			node.priority = scpu * smemory
@@ -459,6 +568,8 @@ func (leader *LeaderServer) SendStateUpdate(ctx context.Context, req *pb.StateUp
 	}
 	if done == false {
 		//TODO: SHOULD TAKE CARE OF THIS INSERTION
+		zap.L().Info("Cannot find the given pmid in OnQueue")
+		zap.L().Info("So inserting it in the OnQueue")
 		item := &Item{
 			PMId:     pmid,
 			scpu:     scpu,
@@ -468,7 +579,7 @@ func (leader *LeaderServer) SendStateUpdate(ctx context.Context, req *pb.StateUp
 		heap.Push(&leader.onqueue, item)
 		done = true
 	}
-	muon.Unlock()
+
 	return &pb.StateUpdateResponse{Accepted: done}, nil
 }
 
@@ -488,26 +599,33 @@ type Resources struct {
 func (leader *LeaderServer) MigrateVM(ctx context.Context, req *pb.MigrateVMRequest) (*pb.MigrateVMResponse, error) {
 	muon.Lock()
 	muoff.Lock()
+	defer muoff.Unlock()
+	defer muon.Unlock()
 	var onpm, offpm []*Item
 	available := make(map[string]Resources)
 	required := make(map[string]Resources)
-	for i := 0; i < TopOnElements; i++ {
+	lenOnQueue := len(leader.onqueue)
+	lenOffQueue := len(leader.offqueue)
+	for i := 0; i < TopOnElements && i < lenOnQueue; i++ {
 		check := heap.Pop(&leader.onqueue).(*Item)
 		onpm = append(onpm, check)
 		available[check.PMId] = Resources{cpu: check.scpu, memory: check.smemory}
 	}
-	for i := 0; i < TopOffElements; i++ {
+	for i := 0; i < TopOffElements && i < lenOffQueue; i++ {
 		check := heap.Pop(&leader.offqueue).(*Item)
 		offpm = append(offpm, check)
 		available[check.PMId] = Resources{cpu: check.scpu, memory: check.smemory}
 	}
+	// Finding out how much every PM requires
 	for _, vmrequest := range req.Assigned {
 		if resource, ok := required[vmrequest.PMId]; ok {
+			// If Key Exists
 			required[vmrequest.PMId] = Resources{
 				cpu:    resource.cpu + vmrequest.Pcpu,
 				memory: resource.memory + vmrequest.Pmemory,
 			}
 		} else {
+			// If key doesn't exists
 			required[vmrequest.PMId] = Resources{cpu: vmrequest.Pcpu, memory: vmrequest.Pmemory}
 		}
 	}
@@ -518,8 +636,6 @@ func (leader *LeaderServer) MigrateVM(ctx context.Context, req *pb.MigrateVMRequ
 		}
 	}
 	if allpmidpresent == false {
-		muoff.Unlock()
-		muon.Unlock()
 		return &pb.MigrateVMResponse{Accepted: false}, nil
 	}
 	allocation := true
@@ -529,11 +645,10 @@ func (leader *LeaderServer) MigrateVM(ctx context.Context, req *pb.MigrateVMRequ
 		}
 	}
 	if allocation == false {
-		muoff.Unlock()
-		muon.Unlock()
 		return &pb.MigrateVMResponse{Accepted: false}, nil
 	}
 	var chaonpm, chaoffpm []*Item
+	// only change the priority of those which are present as destinations to migrate
 	for _, temp := range onpm {
 		if _, ok := required[temp.PMId]; ok {
 			temp.scpu = temp.scpu - required[temp.PMId].cpu
@@ -547,6 +662,7 @@ func (leader *LeaderServer) MigrateVM(ctx context.Context, req *pb.MigrateVMRequ
 	for _, itemptr := range chaonpm {
 		heap.Push(&leader.onqueue, *itemptr)
 	}
+	// only change the priority of those which are present as destinations to migrate
 	for _, temp := range offpm {
 		if _, ok := required[temp.PMId]; ok {
 			temp.scpu = temp.scpu - required[temp.PMId].cpu
@@ -566,6 +682,9 @@ func (leader *LeaderServer) MigrateVM(ctx context.Context, req *pb.MigrateVMRequ
 
 	for _, vmrequest := range req.Assigned {
 		// changing state of Virtual Machine
+		zap.L().Debug("Trying to acquire etcdstore lock for migrating")
+		etcdstore.Lock()
+		zap.L().Debug("Acquired etcdstore lock for migrating")
 		changeStateOfVM(leader.client, vmrequest.VMId, pbc.VMStatusResponse_MIGRATING)
 
 		// inserting vm to pm mapping
@@ -573,19 +692,24 @@ func (leader *LeaderServer) MigrateVM(ctx context.Context, req *pb.MigrateVMRequ
 
 		// inserting pm to vm mapping
 		insertPMToVMMappingMigrating(leader.client, vmrequest.VMId, vmrequest.PMId)
+		zap.L().Debug("Trying to release etcdstore lock for migrating")
+		etcdstore.Unlock()
+		zap.L().Debug("etcdstore lock released")
 	}
-	muoff.Unlock()
-	muon.Unlock()
+
 	return &pb.MigrateVMResponse{Accepted: true}, nil
 }
 
 func StartLeaderProcess(cli *clientv3.Client, lead chan bool, hostName string) {
+	zap.L().Info("Leader Process Started")
+	zap.L().Info("Now every master can start sending requests to leader")
 	go Partition(cli)
 
 	//TODO: Poweroff asynchronously also see migrate keys
 
 	zap.L().Info("Trying to start GRPC Server")
 	address := hostName + ":" + string(LeaderPort)
+	zap.L().Debug("Trying to listen on", zap.String("Address", address))
 	lis, err := net.Listen("tcp", address)
 	if err != nil {
 		zap.L().Error("Failed to listen",
@@ -596,6 +720,7 @@ func StartLeaderProcess(cli *clientv3.Client, lead chan bool, hostName string) {
 	leaderServer := LeaderServer{onqueue: make(PriorityQueue, 0), offqueue: offqueue}
 	zap.L().Info("Registering GRPC Server")
 	pb.RegisterLeaderServer(grpcServer, &leaderServer)
+	zap.L().Debug("gRPC Server started")
 	grpcServer.Serve(lis)
 
 }

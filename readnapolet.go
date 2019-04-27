@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"time"
 
 	pbc "napoleon/controller"
 	pbl "napoleon/leader"
@@ -37,6 +36,9 @@ func ReadRPC(cli *clientv3.Client, squeue chan string) {
 			if len(partition.Ipaddress) < i {
 				break
 			}
+			zap.L().Debug("Ip address to pass to read napolet",
+				zap.String("Ipaddress", partition.Ipaddress[i]),
+			)
 			tunnel <- partition.Ipaddress[i]
 
 			mu.Unlock()
@@ -47,7 +49,7 @@ func ReadRPC(cli *clientv3.Client, squeue chan string) {
 
 func GetStat(client pb.PingClient) *pb.Stat {
 	zap.L().Debug("Getting Stat from napolet")
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), ContextTimeout)
 	defer cancel()
 	stat, err := client.GetStat(ctx, &pb.Dummy{})
 	if err != nil {
@@ -57,10 +59,14 @@ func GetStat(client pb.PingClient) *pb.Stat {
 }
 
 func CreateConnectionSlave(cli *clientv3.Client, ipaddress string) *pb.Stat {
+	zap.L().Debug("Trying to connect with the napolet",
+		zap.String("IPaddress", ipaddress),
+	)
 	conn, err := grpc.Dial(ipaddress+":"+string(napoletport), grpc.WithInsecure())
 	if err != nil {
 		zap.L().Error("Failed to dial", zap.Error(err))
 	}
+	zap.L().Debug("Connected with the napolet", zap.String("IPaddress", ipaddress))
 	defer conn.Close()
 	client := pb.NewPingClient(conn)
 	stat := GetStat(client)
@@ -68,8 +74,12 @@ func CreateConnectionSlave(cli *clientv3.Client, ipaddress string) *pb.Stat {
 }
 
 func SendStateUpdate(client pbl.LeaderClient, pmid string, smem, scpu uint32) {
-	zap.L().Debug("Sending Stat to Leader")
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	zap.L().Debug("Sending Stat to Leader",
+		zap.String("Physical Machine Id", pmid),
+		zap.Uint32("Slack Memory", smem),
+		zap.Uint32("Slack CPU", scpu),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), ContextTimeout)
 	defer cancel()
 	_, err := client.SendStateUpdate(ctx, &pbl.StateUpdateRequest{PMId: pmid, SlackCpu: scpu, SlackMemory: smem})
 	if err != nil {
@@ -79,11 +89,15 @@ func SendStateUpdate(client pbl.LeaderClient, pmid string, smem, scpu uint32) {
 
 func CreateConnectionLeader(pmid string, smem, scpu uint32) {
 	mu.Lock()
+	zap.L().Debug("Trying to connect with the Leader",
+		zap.String("Physical Machine Id", pmid),
+	)
 	conn, err := grpc.Dial(leader+":"+string(LeaderPort), grpc.WithInsecure())
 	mu.Unlock()
 	if err != nil {
 		zap.L().Error("Failed to dial", zap.Error(err))
 	}
+	zap.L().Debug("Connected with the Leader", zap.String("Physical Machine Id", pmid))
 	defer conn.Close()
 	client := pbl.NewLeaderClient(conn)
 	SendStateUpdate(client, pmid, smem, scpu)
@@ -101,11 +115,11 @@ func InformLeader(stat *pb.Stat, squeue chan string) {
 	CreateConnectionLeader(stat.PM.PMId, smem, scpu)
 	if smem == 0 || scpu == 0 {
 		sched.Lock()
+		defer sched.Unlock()
 		squeue <- string(3)
 		value, error := proto.Marshal(stat)
 		zap.L().Error("Error in Marshalling", zap.Error(error))
 		squeue <- string(value)
-		sched.Unlock()
 	}
 }
 
@@ -114,6 +128,9 @@ func TalkToNapolet(cli *clientv3.Client, tunnel, squeue chan string) {
 		ipaddress := <-tunnel
 		stat := CreateConnectionSlave(cli, ipaddress)
 		for _, vm := range stat.VMS {
+			zap.L().Debug("Changing the state of VM depending upon Stat from Napolet",
+				zap.String("VMId", vm.VMId),
+			)
 			if vm.State == "Created" {
 				changeStateOfVM(cli, vm.VMId, pbc.VMStatusResponse_CREATED)
 			} else if vm.State == "Suspended" {

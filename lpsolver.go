@@ -1,6 +1,8 @@
 package main
 
-import "github.com/draffensperger/golp"
+import (
+	"github.com/draffensperger/golp"
+)
 
 const (
 	a = 550
@@ -106,17 +108,26 @@ func Solve(pcpu []uint32, pmemory []uint32, ccpu uint32, cmem uint32, scpu []uin
 }
 
 // func main() {
-// 	lp := golp.NewLP(0, 2)
-// 	lp.AddConstraint([]float64{1, 1}, golp.LE, 1000)
-// 	lp.AddConstraint([]float64{3, 2}, golp.LE, 2300)
-// 	lp.SetObjFn([]float64{6, 5})
-// 	lp.SetMaximize()
 
-// 	lp.Solve()
-// 	vars := lp.Variables()
-// 	fmt.Printf("Plant %.3f acres of barley\n", vars[0])
-// 	fmt.Printf("And  %.3f acres of wheat\n", vars[1])
-// 	fmt.Printf("For optimal profit of $%.2f\n", lp.Objective())
+// 	var pcpu []uint32
+// 	var pmem []uint32
+// 	var ccpu, cmem uint32
+// 	var scpu, smem []uint32
+// 	for i := 0; i < 17; i++ {
+// 		pcpu = append(pcpu, uint32(0.775*float64(1000)))
+// 		pmem = append(pmem, 256)
+// 	}
+// 	ccpu = 16000
+// 	cmem = 32000000
+// 	for i := 0; i < 4; i++ {
+// 		scpu = append(scpu, 16000)
+// 		smem = append(smem, 32000000)
+// 	}
+
+// 	ans := Solve(pcpu, pmem, ccpu, cmem, scpu, smem)
+// 	for vm, pm := range ans {
+// 		fmt.Println(vm, pm)
+// 	}
 
 // 	// No need to explicitly free underlying C structure as golp.LP finalizer will
 // }

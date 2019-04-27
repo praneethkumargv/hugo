@@ -41,6 +41,11 @@ type VM struct {
 // KEY for every VM
 // KEY: vm_$(64bitid) value: *pb.VMStatusResponse
 func (v *VM) CreateVM(ctx context.Context, req *pb.VMCreateRequest) (resp *pb.VMCreateResponse, err error) {
+	zap.L().Debug("Got a CreateVM request",
+		zap.String("VM Name", req.VMName),
+		zap.Uint32("CPUs", req.Vcpus),
+		zap.Uint32("Memory", req.Memory),
+	)
 	vm := &pb.VMStatusResponse{Vm: req}
 	vm.Status = pb.VMStatusResponse_PENDING
 	number := make([]byte, uniqueIdLength)
@@ -80,6 +85,9 @@ func (v *VM) CreateVM(ctx context.Context, req *pb.VMCreateRequest) (resp *pb.VM
 }
 
 func (v *VM) DeleteVM(ctx context.Context, req *pb.VMDeleteRequest) (*pb.VMDeleteResponse, error) {
+	zap.L().Debug("Got a DeleteVM request",
+		zap.String("VMId", req.VMId),
+	)
 	key := req.VMId
 	getResp := GetKeyResp(context.Background(), v.client, key)
 	if isKeyPresent(getResp) == false {
@@ -118,6 +126,9 @@ func (v *VM) DeleteVM(ctx context.Context, req *pb.VMDeleteRequest) (*pb.VMDelet
 }
 
 func (v *VM) StatusVM(ctx context.Context, req *pb.VMStatusRequest) (*pb.VMStatusResponse, error) {
+	zap.L().Info("Got A Status VM request",
+		zap.String("VMId", req.VMId),
+	)
 	key := req.VMId
 	getResp := GetKeyResp(context.Background(), v.client, key)
 	if isKeyPresent(getResp) == false {
@@ -151,6 +162,7 @@ func isKeyPresent(resp *clientv3.GetResponse) bool {
 func CheckLeader(cli *clientv3.Client, lead chan bool, hostName string) {
 	zap.L().Info("Taking care of Leader Changes")
 	for {
+		zap.L().Debug("Checking for leader for next period")
 		resp := GetKeyResp(context.Background(), cli, LeaderKey)
 
 		// should use reader and writer lock
@@ -162,6 +174,7 @@ func CheckLeader(cli *clientv3.Client, lead chan bool, hostName string) {
 			zap.String("Leader", leader),
 		)
 
+		zap.L().Debug("Updating the partition for next period")
 		partitionKey := "partition_master_" + hostName
 		resp = GetKeyResp(context.Background(), cli, partitionKey)
 
@@ -175,30 +188,38 @@ func CheckLeader(cli *clientv3.Client, lead chan bool, hostName string) {
 			zap.String("Partition", leader),
 		)
 
-		// Will run next time only when there is a leader change event.
 		_ = <-lead
-		zap.L().Info("There is a change in a Leader")
 	}
 }
 
 func MasterUpdation(mast chan bool) {
-	time.Sleep(partitionUpdateInterval)
-	mast <- true
+	for {
+		zap.L().Debug("Master Update started for next period")
+		time.Sleep(partitionUpdateInterval)
+		mast <- true
+	}
 }
 
 func MasterServer(cli *clientv3.Client, hostName string, queue chan string) {
 	zap.L().Info("Trying to start GRPC Server")
 	address := hostName + ":" + string(ControllerPort)
+	zap.L().Info("Master Server starting on",
+		zap.String("IPAddress", address),
+	)
 	lis, err := net.Listen("tcp", address)
 	if err != nil {
 		zap.L().Error("Failed to listen",
 			zap.Error(err),
 		)
 	}
+	zap.L().Info("Starting gRPC Server")
 	grpcServer := grpc.NewServer()
 	vmserver := VM{client: cli, queue: queue}
 	zap.L().Info("Registering GRPC Server")
 	pb.RegisterVMServer(grpcServer, &vmserver)
+	zap.L().Info("Master listening on",
+		zap.String("IPaddress", address),
+	)
 	grpcServer.Serve(lis)
 }
 
@@ -207,11 +228,7 @@ func Controller(cli *clientv3.Client, lead chan bool, hostName string) {
 	go CheckLeader(cli, lead, hostName)
 
 	schedulingQueue := make(chan string, schedulingQueueLength)
-	// TODO:
 	go Scheduler(cli, schedulingQueue)
-	// TODO:
 	go ReadRPC(cli, schedulingQueue)
-
-	// TODO: now create grpc server
 	MasterServer(cli, hostName, schedulingQueue)
 }
