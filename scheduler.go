@@ -23,11 +23,12 @@ import (
 
 // TODO: When request for migration scheduler sees if it is in it's partition
 
-func Scheduler(cli *clientv3.Client, squeue chan string) {
+func Scheduler(cli *clientv3.Client, squeue chan Sched) {
 	for {
 		zap.L().Debug("Got a VM request and need to execute")
-		reqtype := <-squeue
-		reqparam := <-squeue
+		req := <-squeue
+		reqtype := string(req.types)
+		reqparam := req.method
 		var done bool
 		for i := 0; i < 10; i++ {
 			if reqtype == "1" {

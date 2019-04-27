@@ -22,7 +22,7 @@ const (
 	napoletport = 8799
 )
 
-func ReadRPC(cli *clientv3.Client, squeue chan string) {
+func ReadRPC(cli *clientv3.Client, squeue chan Sched) {
 	tunnel := make(chan string)
 	for i := 0; i < noOfReadRPCs; i++ {
 		go TalkToNapolet(cli, tunnel, squeue)
@@ -103,7 +103,7 @@ func CreateConnectionLeader(pmid string, smem, scpu uint32) {
 	SendStateUpdate(client, pmid, smem, scpu)
 }
 
-func InformLeader(stat *pb.Stat, squeue chan string) {
+func InformLeader(stat *pb.Stat, squeue chan Sched) {
 	var smem, scpu uint32
 	if stat.PM.SlackMemory == 0 || stat.PM.SlackCpu == 0 {
 		smem = 0
@@ -114,16 +114,15 @@ func InformLeader(stat *pb.Stat, squeue chan string) {
 	}
 	CreateConnectionLeader(stat.PM.PMId, smem, scpu)
 	if smem == 0 || scpu == 0 {
-		sched.Lock()
-		defer sched.Unlock()
-		squeue <- string(3)
+
 		value, error := proto.Marshal(stat)
 		zap.L().Error("Error in Marshalling", zap.Error(error))
-		squeue <- string(value)
+		eleme := Sched{types: 3, method: string(value)}
+		squeue <- eleme
 	}
 }
 
-func TalkToNapolet(cli *clientv3.Client, tunnel, squeue chan string) {
+func TalkToNapolet(cli *clientv3.Client, tunnel chan string, squeue chan Sched) {
 	for {
 		ipaddress := <-tunnel
 		stat := CreateConnectionSlave(cli, ipaddress)

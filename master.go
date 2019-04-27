@@ -29,12 +29,16 @@ var (
 	leader    string
 	partition pbtype.Partition // should need to discuss about partition format
 	mu        sync.Mutex
-	sched     sync.Mutex
 )
+
+type Sched struct {
+	types  int
+	method string
+}
 
 type VM struct {
 	client *clientv3.Client
-	queue  chan string
+	queue  chan Sched
 }
 
 // This function will run when there is a create VM request
@@ -75,10 +79,8 @@ func (v *VM) CreateVM(ctx context.Context, req *pb.VMCreateRequest) (resp *pb.VM
 	}
 	resp = &pb.VMCreateResponse{VMId: vm.VMId}
 
-	sched.Lock()
-	v.queue <- string(1)
-	v.queue <- vminfo
-	sched.Unlock()
+	schedSend := Sched{types: 1, method: vminfo}
+	v.queue <- schedSend
 
 	zap.L().Info("Inserted into scheduling queue and in pending state")
 	return
@@ -116,10 +118,9 @@ func (v *VM) DeleteVM(ctx context.Context, req *pb.VMDeleteRequest) (*pb.VMDelet
 		zap.L().Info("Key is inserted",
 			zap.String("Key", key),
 		)
-		sched.Lock()
-		v.queue <- string(2)
-		v.queue <- string(newValue)
-		sched.Unlock()
+
+		schedSend := Sched{types: 2, method: string(newValue)}
+		v.queue <- schedSend
 
 	}
 	return &pb.VMDeleteResponse{Accepted: true}, nil
@@ -200,7 +201,7 @@ func MasterUpdation(mast chan bool) {
 	}
 }
 
-func MasterServer(cli *clientv3.Client, hostName string, queue chan string) {
+func MasterServer(cli *clientv3.Client, hostName string, queue chan Sched) {
 	zap.L().Info("Trying to start GRPC Server")
 	address := hostName + ":" + string(ControllerPort)
 	zap.L().Info("Master Server starting on",
@@ -227,7 +228,7 @@ func Controller(cli *clientv3.Client, lead chan bool, hostName string) {
 	zap.L().Info("Controller is Started")
 	go CheckLeader(cli, lead, hostName)
 
-	schedulingQueue := make(chan string, schedulingQueueLength)
+	schedulingQueue := make(chan Sched, schedulingQueueLength)
 	go Scheduler(cli, schedulingQueue)
 	go ReadRPC(cli, schedulingQueue)
 	MasterServer(cli, hostName, schedulingQueue)
