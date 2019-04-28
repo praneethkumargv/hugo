@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -52,17 +52,12 @@ func (v *VM) CreateVM(ctx context.Context, req *pb.VMCreateRequest) (resp *pb.VM
 	)
 	vm := &pb.VMStatusResponse{Vm: req}
 	vm.Status = pb.VMStatusResponse_PENDING
-	number := make([]byte, uniqueIdLength)
+	// number := make([]byte, uniqueIdLength)
 	var vminfo string
 	for {
-		_, err := rand.Read(number)
-		if err != nil {
-			zap.L().Error("Error in Generating Random Number",
-				zap.Error(err),
-			)
-		}
+		no := rand.Int63()
 
-		key := "vm_" + string(number)
+		key := "vm_" + fmt.Sprintf("%d", no)
 		zap.L().Info("Key is generated", zap.String("Key", key))
 		vm.VMId = key
 

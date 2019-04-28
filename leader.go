@@ -369,7 +369,7 @@ func (leader *LeaderServer) CreateNewVM(ctx context.Context, req *pb.CreateNewVM
 		temp = append(temp, check)
 	}
 	for _, itemptr := range temp {
-		heap.Push(&leader.onqueue, *itemptr)
+		heap.Push(&leader.onqueue, itemptr)
 	}
 	muon.Unlock()
 	zap.L().Debug("Lock Released on ONQueue")
@@ -414,7 +414,7 @@ func (leader *LeaderServer) CreateNewVM(ctx context.Context, req *pb.CreateNewVM
 			temp = append(temp, check)
 		}
 		for _, itemptr := range temp {
-			heap.Push(&leader.offqueue, *itemptr)
+			heap.Push(&leader.offqueue, itemptr)
 		}
 		zap.L().Debug("Unlocking OFF queue")
 		muoff.Unlock()
@@ -426,7 +426,7 @@ func (leader *LeaderServer) CreateNewVM(ctx context.Context, req *pb.CreateNewVM
 		zap.L().Debug("Inserting the ONed PM to ON Queue",
 			zap.String("Physical Machine Id", onPM.PMId),
 		)
-		heap.Push(&leader.onqueue, &onPM)
+		heap.Push(&leader.onqueue, onPM)
 		muon.Unlock()
 
 		// changing state of Virtual Machine
@@ -515,20 +515,20 @@ func heapOperation(client *clientv3.Client, queue *PriorityQueue, resp *pb.State
 		part.State = state
 
 		// Reading the database here
-		value := getKeyValue(GetKeyResp(context.Background(), client, part.PMId))
-		var valueOfPM pbtype.PM
-		error := proto.Unmarshal([]byte(value), &valueOfPM)
-		if error != nil {
-			zap.L().Error("Unmarshalling Error", zap.Error(error))
-		}
+		// value := getKeyValue(GetKeyResp(context.Background(), client, part.PMId))
+		// var valueOfPM pbtype.PM
+		// error := proto.Unmarshal([]byte(value), &valueOfPM)
+		// if error != nil {
+		// 	zap.L().Error("Unmarshalling Error", zap.Error(error))
+		// }
 
-		part.CapacityCpu = valueOfPM.Vcpu
-		part.CapacityMemory = valueOfPM.Memory
+		// part.CapacityCpu = valueOfPM.Vcpu
+		// part.CapacityMemory = valueOfPM.Memory
 		resp.Pm = append(resp.Pm, &part)
 	}
 
 	for _, itemptr := range temp {
-		heap.Push(queue, *itemptr)
+		heap.Push(queue, itemptr)
 	}
 	zap.L().Debug("Trying to UnLock the", zap.Bool("Queue Name", state))
 }
@@ -718,7 +718,7 @@ func StartLeaderProcess(cli *clientv3.Client, lead chan bool, hostName, ipaddres
 		)
 	}
 	grpcServer := grpc.NewServer()
-	leaderServer := LeaderServer{onqueue: make(PriorityQueue, 0), offqueue: offqueue}
+	leaderServer := LeaderServer{onqueue: make(PriorityQueue, 0), offqueue: offqueue, client: cli}
 	zap.L().Info("Registering GRPC Server")
 	pb.RegisterLeaderServer(grpcServer, &leaderServer)
 	zap.L().Debug("gRPC Server started")

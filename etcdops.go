@@ -65,11 +65,11 @@ func InsertKey(cli *clientv3.Client, key, value string) (resp *clientv3.PutRespo
 }
 
 // Get the Resp for a given Key value
-func GetKeyResp(ctx context.Context, cli *clientv3.Client, key string) (resp *clientv3.GetResponse) {
+func GetKeyResp(ctx context.Context, cli *clientv3.Client, key string) *clientv3.GetResponse {
 	zap.L().Debug("Getting Information about a key",
 		zap.String("Key", key),
 	)
-	ctx, cancel := context.WithTimeout(ctx, ContextTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), ContextTimeout)
 	defer cancel()
 	ctx = clientv3.WithRequireLeader(ctx)
 	resp, err := cli.Get(ctx, key)
@@ -80,7 +80,7 @@ func GetKeyResp(ctx context.Context, cli *clientv3.Client, key string) (resp *cl
 		zap.String("Key", key),
 		// zap.String("")
 	)
-	return
+	return resp
 }
 
 // KeepAlive: Keeps Alive the lease

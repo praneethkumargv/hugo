@@ -12,7 +12,7 @@ import (
 
 const (
 	// Timeout for context
-	ContextTimeout   = time.Second
+	ContextTimeout   = 10 * time.Second
 	dialTimeout      = 5 * time.Second
 	MinimumLeaseTime = int64(5)
 	LeaderKey        = "/elected"
@@ -139,9 +139,18 @@ func SelectLeader(cli *clientv3.Client, hostName string, pipe, lead chan bool, i
 	}
 }
 
+func NewLogger() (*zap.Logger, error) {
+	cfg := zap.NewProductionConfig()
+	cfg.OutputPaths = []string{
+		"/home/praneeth/go/src/napoleon/controller.log",
+	}
+	return cfg.Build()
+}
+
 func main() {
 	// Created logger and made the logger pacakge global
 	logger, err := zap.NewDevelopment()
+	// logger, err := NewLogger()
 	if err != nil {
 		log.Fatal("Logger Error")
 	}
