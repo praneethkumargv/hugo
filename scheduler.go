@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	pbc "napoleon/controller"
 	pbl "napoleon/leader"
@@ -25,9 +26,9 @@ import (
 
 func Scheduler(cli *clientv3.Client, squeue chan Sched) {
 	for {
-		zap.L().Debug("Got a VM request and need to execute")
 		req := <-squeue
-		reqtype := string(req.types)
+		zap.L().Debug("Got a VM request and need to execute")
+		reqtype := fmt.Sprintf("%d", req.types)
 		reqparam := req.method
 		var done bool
 		for i := 0; i < 10; i++ {
@@ -97,10 +98,10 @@ func ScheduleCreateVM(reqparam string, cli *clientv3.Client) (done bool) {
 	}
 
 	// TODO: READERS AND WRITERS LOCK FOR LEADER
-	mu.Lock()
+	// mu.RLock()
 	zap.L().Debug("Making connection with Leader")
-	conn, err := grpc.Dial(leader+":"+string(LeaderPort), grpc.WithInsecure())
-	mu.Unlock()
+	conn, err := grpc.Dial(leader+":"+fmt.Sprintf("%d", LeaderPort), grpc.WithInsecure())
+	// mu.RUnlock()
 	if err != nil {
 		zap.L().Error("Failed to dial", zap.Error(err))
 	}
@@ -133,7 +134,7 @@ func ScheduleCreateVM(reqparam string, cli *clientv3.Client) (done bool) {
 			zap.L().Error("Unmarshalling Error", zap.Error(error))
 		}
 		zap.L().Debug("Trying to connect with napolet")
-		conn, err := grpc.Dial(temp.Ipaddress+":"+string(napoletport), grpc.WithInsecure())
+		conn, err := grpc.Dial(temp.Ipaddress, grpc.WithInsecure())
 		if err != nil {
 			zap.L().Error("Failed to dial", zap.Error(err))
 		}
@@ -200,10 +201,10 @@ func ScheduleDeleteVM(reqparam string, cli *clientv3.Client) (done bool) {
 	if error != nil {
 		zap.L().Error("Unmarshalling Error", zap.Error(error))
 	}
-	mu.Lock()
+	// mu.RLock()
 	zap.L().Debug("Making connection with Leader")
-	conn, err := grpc.Dial(leader+":"+string(LeaderPort), grpc.WithInsecure())
-	mu.Unlock()
+	conn, err := grpc.Dial(leader+":"+fmt.Sprintf("%d", LeaderPort), grpc.WithInsecure())
+	// mu.RUnlock()
 	if err != nil {
 		zap.L().Error("Failed to dial", zap.Error(err))
 	}
@@ -222,7 +223,7 @@ func ScheduleDeleteVM(reqparam string, cli *clientv3.Client) (done bool) {
 			zap.L().Error("Unmarshalling Error", zap.Error(error))
 		}
 		zap.L().Debug("Trying to connect with napolet")
-		conn, err := grpc.Dial(temp.Ipaddress+":"+string(napoletport), grpc.WithInsecure())
+		conn, err := grpc.Dial(temp.Ipaddress, grpc.WithInsecure())
 		if err != nil {
 			zap.L().Error("Failed to dial", zap.Error(err))
 		}
@@ -267,10 +268,10 @@ func ScheduleMigrateVM(reqparam string) (done bool) {
 	zap.L().Debug("Scheduled to Migrate VM's in PM",
 		zap.String("Physical Machine Id", value.PM.PMId),
 	)
-	mu.Lock()
+	// mu.RLock()
 	zap.L().Debug("Making connection with Leader")
-	conn, err := grpc.Dial(leader+":"+string(LeaderPort), grpc.WithInsecure())
-	mu.Unlock()
+	conn, err := grpc.Dial(leader+":"+fmt.Sprintf("%d", LeaderPort), grpc.WithInsecure())
+	// mu.RUnlock()
 	if err != nil {
 		zap.L().Error("Failed to dial", zap.Error(err))
 	}

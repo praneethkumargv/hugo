@@ -3,6 +3,7 @@ package main
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"math"
 	"net"
 	"sync"
@@ -46,8 +47,8 @@ func Partition(cli *clientv3.Client) {
 		muon.Lock()
 		zap.L().Info("Starting partition")
 		zap.L().Debug("Trying to start partitioning the available physical machines to available masters")
-		key := "pm_" + string(MinUint)
-		end := "pm_" + string(MaxUint)
+		key := "pm_" + fmt.Sprintf("%d", 0)
+		end := "pm_" + fmt.Sprintf("%d", 9999999)
 		zap.L().Info("Key Starting and Ending",
 			zap.String("Start", key),
 			zap.String("End", end),
@@ -83,8 +84,8 @@ func Partition(cli *clientv3.Client) {
 			zap.Int("Powered Off PM's", len(arroff)),
 		)
 
-		key = "master_s" + string(1)
-		end = "master_s" + string(9)
+		key = "master_s" + fmt.Sprintf("%d", 1)
+		end = "master_s" + fmt.Sprintf("%d", 9)
 		zap.L().Info("Master Starting and Ending",
 			zap.String("Start", key),
 			zap.String("End", end),
@@ -118,7 +119,7 @@ func Partition(cli *clientv3.Client) {
 			}
 
 			//KEY: partition_$(hostname) VALUE: protobuf of IPAddress
-			key := "partition_" + string(master.Value)
+			key := "partition_" + string(master.Key)
 			zap.L().Debug("Trying to insert 'partition_$(hostname) key'",
 				zap.String("Partition Key", key),
 			)
@@ -700,7 +701,7 @@ func (leader *LeaderServer) MigrateVM(ctx context.Context, req *pb.MigrateVMRequ
 	return &pb.MigrateVMResponse{Accepted: true}, nil
 }
 
-func StartLeaderProcess(cli *clientv3.Client, lead chan bool, hostName string) {
+func StartLeaderProcess(cli *clientv3.Client, lead chan bool, hostName, ipaddress string) {
 	zap.L().Info("Leader Process Started")
 	zap.L().Info("Now every master can start sending requests to leader")
 	go Partition(cli)
@@ -708,7 +709,7 @@ func StartLeaderProcess(cli *clientv3.Client, lead chan bool, hostName string) {
 	//TODO: Poweroff asynchronously also see migrate keys
 
 	zap.L().Info("Trying to start GRPC Server")
-	address := hostName + ":" + string(LeaderPort)
+	address := fmt.Sprintf("%s:%d", ipaddress, LeaderPort)
 	zap.L().Debug("Trying to listen on", zap.String("Address", address))
 	lis, err := net.Listen("tcp", address)
 	if err != nil {

@@ -78,6 +78,7 @@ func GetKeyResp(ctx context.Context, cli *clientv3.Client, key string) (resp *cl
 	}
 	zap.L().Info("GET Response for a given key is returned",
 		zap.String("Key", key),
+		// zap.String("")
 	)
 	return
 }

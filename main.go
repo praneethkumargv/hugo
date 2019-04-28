@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"time"
 
@@ -15,9 +16,19 @@ const (
 	dialTimeout      = 5 * time.Second
 	MinimumLeaseTime = int64(5)
 	LeaderKey        = "/elected"
-	ControllerPort   = 8080
 	LeaderPort       = 8081
 )
+
+var ControllerPort, noOfReadRPCs int
+var hostName, ipaddress string
+
+func init() {
+	flag.IntVar(&ControllerPort, "cport", 8080, "Controller Port For CRUD Operations")
+	flag.IntVar(&noOfReadRPCs, "rpc", 1, "To talk to napolets")
+	flag.StringVar(&hostName, "name", "s1", "Host Name for Partition")
+	flag.StringVar(&ipaddress, "ip", "localhost", "Ipaddress to host")
+	flag.Parse()
+}
 
 // masterInsert inserts the master_$(hostname) key into etcd store
 // periodically with a lease. This will tell which master hosts are
@@ -81,7 +92,7 @@ func WatchLeaderElection(cli *clientv3.Client, hostName string, pipe, mast, lead
 }
 
 // Leader KEY: /elected VALUE: hostName
-func SelectLeader(cli *clientv3.Client, hostName string, pipe, lead chan bool) {
+func SelectLeader(cli *clientv3.Client, hostName string, pipe, lead chan bool, ipaddress string) {
 	zap.L().Debug("Master started trying to become Leader")
 	for {
 		zap.L().Info("Starting Leader Election Process")
@@ -103,7 +114,7 @@ func SelectLeader(cli *clientv3.Client, hostName string, pipe, lead chan bool) {
 		resp, err := cli.Txn(ctx).If(
 			clientv3.Compare(clientv3.Version(LeaderKey), "=", 0),
 		).Then(
-			clientv3.OpPut(LeaderKey, hostName, clientv3.WithLease(lease.ID)),
+			clientv3.OpPut(LeaderKey, ipaddress, clientv3.WithLease(lease.ID)),
 		).Commit()
 		if err != nil {
 			zap.L().Error("TXN Error", zap.Error(err))
@@ -116,9 +127,8 @@ func SelectLeader(cli *clientv3.Client, hostName string, pipe, lead chan bool) {
 			)
 			// Now keep alive
 			go KeepAlive(context.Background(), cli, lease)
-			//
-			// TODO:
-			StartLeaderProcess(cli, lead, hostName)
+
+			StartLeaderProcess(cli, lead, hostName, ipaddress)
 		} else {
 			zap.L().Info("Leader is Selected, but this is not the selected leader",
 				zap.String("Host Name", hostName),
@@ -130,11 +140,6 @@ func SelectLeader(cli *clientv3.Client, hostName string, pipe, lead chan bool) {
 }
 
 func main() {
-
-	// TODO: This values should also be received from config file
-	const hostName = "praneeth"
-	const ipaddress = "localhost"
-
 	// Created logger and made the logger pacakge global
 	logger, err := zap.NewDevelopment()
 	if err != nil {
@@ -154,8 +159,7 @@ func main() {
 	for _, endpoint := range clientendpoints {
 		zap.L().Debug("Endpoint", zap.String("Endpoint", endpoint))
 	}
-	// Trying to connect with the etcd data store
-	// TODO: Change the endpoints so it can be accesible from config file
+
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:   clientendpoints,
 		DialTimeout: dialTimeout,
@@ -178,10 +182,10 @@ func main() {
 	//Will see if there is any change in leader status
 	go WatchLeaderElection(cli, hostName, pipe, mast, lead)
 	//Will select the leader if there is no new leader
-	go SelectLeader(cli, hostName, pipe, lead)
+	go SelectLeader(cli, hostName, pipe, lead, ipaddress)
 	// For Partition Updates periodically
 	go MasterUpdation(mast)
 
 	//Will be the endpoint for the client to make VM create and delete requests
-	Controller(cli, mast, hostName)
+	Controller(cli, mast, hostName, ipaddress)
 }

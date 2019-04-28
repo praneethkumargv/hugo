@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	pbc "napoleon/controller"
 	pbl "napoleon/leader"
@@ -13,64 +15,67 @@ import (
 	"google.golang.org/grpc"
 )
 
-//TODO:
-// napolet client
-// leader client
-// etcd client
-
-const (
-	napoletport = 8799
-)
-
 func ReadRPC(cli *clientv3.Client, squeue chan Sched) {
 	tunnel := make(chan string)
 	for i := 0; i < noOfReadRPCs; i++ {
 		go TalkToNapolet(cli, tunnel, squeue)
 	}
 	for {
-		mu.Lock()
+		start := time.Now()
+		mu.RLock()
 		length := len(partition.Ipaddress)
-		mu.Unlock()
+		mu.RUnlock()
 		for i := 0; i < length; i++ {
-			mu.Lock()
+			mu.RLock()
 			if len(partition.Ipaddress) < i {
 				break
 			}
+
 			zap.L().Debug("Ip address to pass to read napolet",
 				zap.String("Ipaddress", partition.Ipaddress[i]),
 			)
 			tunnel <- partition.Ipaddress[i]
 
-			mu.Unlock()
+			mu.RUnlock()
 		}
+		_ = time.Since(start)
+		zap.L().Debug("")
+		time.Sleep(5 * time.Second)
+		// time.Sleep(5*time.Minute - elapsed)
 	}
 
 }
 
-func GetStat(client pb.PingClient) *pb.Stat {
+func GetStat(client pb.PingClient) (*pb.Stat, error) {
 	zap.L().Debug("Getting Stat from napolet")
 	ctx, cancel := context.WithTimeout(context.Background(), ContextTimeout)
 	defer cancel()
 	stat, err := client.GetStat(ctx, &pb.Dummy{})
 	if err != nil {
-		zap.L().Error("Error in calling RPC", zap.Error(err))
+		zap.L().Warn("Error in calling RPC", zap.Error(err))
+		return nil, err
 	}
-	return stat
+	return stat, nil
 }
 
-func CreateConnectionSlave(cli *clientv3.Client, ipaddress string) *pb.Stat {
+func CreateConnectionSlave(cli *clientv3.Client, ipaddress string) (*pb.Stat, error) {
 	zap.L().Debug("Trying to connect with the napolet",
 		zap.String("IPaddress", ipaddress),
 	)
-	conn, err := grpc.Dial(ipaddress+":"+string(napoletport), grpc.WithInsecure())
+	conn, err := grpc.Dial(ipaddress, grpc.WithInsecure())
 	if err != nil {
 		zap.L().Error("Failed to dial", zap.Error(err))
+		return nil, err
 	}
-	zap.L().Debug("Connected with the napolet", zap.String("IPaddress", ipaddress))
+	// zap.L().Debug("Connected with the napolet", zap.String("IPaddress", ipaddress))
 	defer conn.Close()
 	client := pb.NewPingClient(conn)
-	stat := GetStat(client)
-	return stat
+	stat, err := GetStat(client)
+	if err != nil {
+		return nil, err
+	}
+	zap.L().Debug("Connected with the napolet", zap.String("IPaddress", ipaddress))
+	return stat, nil
 }
 
 func SendStateUpdate(client pbl.LeaderClient, pmid string, smem, scpu uint32) {
@@ -84,18 +89,26 @@ func SendStateUpdate(client pbl.LeaderClient, pmid string, smem, scpu uint32) {
 	_, err := client.SendStateUpdate(ctx, &pbl.StateUpdateRequest{PMId: pmid, SlackCpu: scpu, SlackMemory: smem})
 	if err != nil {
 		zap.L().Error("Error in calling RPC", zap.Error(err))
+		return
 	}
 }
 
+// func RecoverFromClosedConnections() {
+// 	if r := recover(); r != nil {
+// 		fmt.Println(r)
+// 	}
+// }
+
 func CreateConnectionLeader(pmid string, smem, scpu uint32) {
-	mu.Lock()
+	mu.RLock()
 	zap.L().Debug("Trying to connect with the Leader",
 		zap.String("Physical Machine Id", pmid),
 	)
-	conn, err := grpc.Dial(leader+":"+string(LeaderPort), grpc.WithInsecure())
-	mu.Unlock()
+	conn, err := grpc.Dial(leader+":"+fmt.Sprintf("%d", LeaderPort), grpc.WithInsecure())
+	mu.RUnlock()
 	if err != nil {
 		zap.L().Error("Failed to dial", zap.Error(err))
+		return
 	}
 	zap.L().Debug("Connected with the Leader", zap.String("Physical Machine Id", pmid))
 	defer conn.Close()
@@ -125,7 +138,11 @@ func InformLeader(stat *pb.Stat, squeue chan Sched) {
 func TalkToNapolet(cli *clientv3.Client, tunnel chan string, squeue chan Sched) {
 	for {
 		ipaddress := <-tunnel
-		stat := CreateConnectionSlave(cli, ipaddress)
+		stat, err := CreateConnectionSlave(cli, ipaddress)
+		if err != nil {
+			zap.L().Warn("Not connected with IPaddress", zap.String("Ipaddress", ipaddress))
+			continue
+		}
 		for _, vm := range stat.VMS {
 			zap.L().Debug("Changing the state of VM depending upon Stat from Napolet",
 				zap.String("VMId", vm.VMId),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -20,15 +21,14 @@ import (
 
 const (
 	schedulingQueueLength   = 1000 // the buffer for scheduling queue
-	noOfReadRPCs            = 10
 	uniqueIdLength          = 64
 	partitionUpdateInterval = 10 * time.Second
 )
 
 var (
 	leader    string
-	partition pbtype.Partition // should need to discuss about partition format
-	mu        sync.Mutex
+	partition pbtype.Partition
+	mu        sync.RWMutex
 )
 
 type Sched struct {
@@ -152,9 +152,9 @@ func getKeyValue(resp *clientv3.GetResponse) string {
 
 func isKeyPresent(resp *clientv3.GetResponse) bool {
 	if len(resp.Kvs) == 0 {
-		return true
+		return false
 	}
-	return false
+	return true
 }
 
 // This function will take care of leader changes and partition changes
@@ -168,7 +168,9 @@ func CheckLeader(cli *clientv3.Client, lead chan bool, hostName string) {
 
 		// should use reader and writer lock
 		mu.Lock()
-		leader = getKeyValue(resp)
+		if isKeyPresent(resp) == true {
+			leader = getKeyValue(resp)
+		}
 		mu.Unlock()
 
 		zap.L().Info("Leader Information is known",
@@ -180,9 +182,18 @@ func CheckLeader(cli *clientv3.Client, lead chan bool, hostName string) {
 		resp = GetKeyResp(context.Background(), cli, partitionKey)
 
 		mu.Lock()
-		temp := getKeyValue(resp)
-		error := proto.Unmarshal([]byte(temp), &partition)
-		zap.L().Error("Error in Unmarshalling", zap.Error(error))
+
+		if isKeyPresent(resp) == true {
+			temp := getKeyValue(resp)
+			error := proto.Unmarshal([]byte(temp), &partition)
+			if error != nil {
+				zap.L().Error("Error in Unmarshalling", zap.Error(error))
+			}
+			// for _, part := range partition.Ipaddress {
+			// 	zap.L().Panic("Ipaddress", zap.String("Ipaddress", part))
+			// }
+		}
+
 		mu.Unlock()
 
 		zap.L().Info("Partition Information is known",
@@ -201,9 +212,9 @@ func MasterUpdation(mast chan bool) {
 	}
 }
 
-func MasterServer(cli *clientv3.Client, hostName string, queue chan Sched) {
+func MasterServer(cli *clientv3.Client, hostName string, queue chan Sched, ipaddress string) {
 	zap.L().Info("Trying to start GRPC Server")
-	address := hostName + ":" + string(ControllerPort)
+	address := ipaddress + ":" + fmt.Sprintf("%d", ControllerPort)
 	zap.L().Info("Master Server starting on",
 		zap.String("IPAddress", address),
 	)
@@ -224,12 +235,12 @@ func MasterServer(cli *clientv3.Client, hostName string, queue chan Sched) {
 	grpcServer.Serve(lis)
 }
 
-func Controller(cli *clientv3.Client, lead chan bool, hostName string) {
+func Controller(cli *clientv3.Client, lead chan bool, hostName, ipaddress string) {
 	zap.L().Info("Controller is Started")
 	go CheckLeader(cli, lead, hostName)
 
 	schedulingQueue := make(chan Sched, schedulingQueueLength)
 	go Scheduler(cli, schedulingQueue)
 	go ReadRPC(cli, schedulingQueue)
-	MasterServer(cli, hostName, schedulingQueue)
+	MasterServer(cli, hostName, schedulingQueue, ipaddress)
 }
