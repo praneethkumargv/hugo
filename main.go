@@ -140,7 +140,7 @@ func SelectLeader(cli *clientv3.Client, hostName string, pipe, lead chan bool, i
 }
 
 func NewLogger() (*zap.Logger, error) {
-	cfg := zap.NewProductionConfig()
+	cfg := zap.NewDevelopmentConfig()
 	cfg.OutputPaths = []string{
 		"/home/praneeth/go/src/napoleon/controller.log",
 	}

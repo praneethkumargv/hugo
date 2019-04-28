@@ -661,7 +661,7 @@ func (leader *LeaderServer) MigrateVM(ctx context.Context, req *pb.MigrateVMRequ
 		}
 	}
 	for _, itemptr := range chaonpm {
-		heap.Push(&leader.onqueue, *itemptr)
+		heap.Push(&leader.onqueue, itemptr)
 	}
 	// only change the priority of those which are present as destinations to migrate
 	for _, temp := range offpm {
@@ -678,7 +678,7 @@ func (leader *LeaderServer) MigrateVM(ctx context.Context, req *pb.MigrateVMRequ
 	}
 
 	for _, itemptr := range chaoffpm {
-		heap.Push(&leader.offqueue, *itemptr)
+		heap.Push(&leader.offqueue, itemptr)
 	}
 
 	for _, vmrequest := range req.Assigned {
