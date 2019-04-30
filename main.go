@@ -149,8 +149,8 @@ func NewLogger() (*zap.Logger, error) {
 
 func main() {
 	// Created logger and made the logger pacakge global
-	logger, err := zap.NewDevelopment()
-	// logger, err := NewLogger()
+	// logger, err := zap.NewDevelopment()
+	logger, err := NewLogger()
 	if err != nil {
 		log.Fatal("Logger Error")
 	}

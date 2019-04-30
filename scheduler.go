@@ -286,9 +286,14 @@ func ScheduleMigrateVM(reqparam string) (done bool) {
 	pmmap := make(map[int]*pbl.PMInformation)
 	ccpu = value.PM.SlackCpu
 	cmemory = value.PM.SlackMemory
+	zap.L().Debug("", zap.Uint32("Capacity CPU", ccpu))
+	zap.L().Debug("", zap.Uint32("Capacity Memory", cmemory))
+
 	zap.L().Debug("The VM's on the physical machine are")
 	for i, vm := range value.VMS {
 		zap.L().Debug("", zap.String("VMId", vm.VMId))
+		zap.L().Debug("", zap.Uint32("Predicted CPU", vm.PredictedCpu))
+		zap.L().Debug("", zap.Uint32("Predicted Memory", vm.PredictedMemory))
 		vmmap[i] = vm
 		pcpu = append(pcpu, vm.PredictedCpu)
 		pmemory = append(pmemory, vm.PredictedMemory)
@@ -296,6 +301,8 @@ func ScheduleMigrateVM(reqparam string) (done bool) {
 	zap.L().Debug("The retrieved PM's are")
 	for i, pm := range pms.Pm {
 		zap.L().Debug("", zap.String("PMId", pm.PMId))
+		zap.L().Debug("", zap.Uint32("Slack CPU", pm.SlackCpu))
+		zap.L().Debug("", zap.Uint32("Slack Memory", pm.SlackMemory))
 		pmmap[i] = pm
 		scpu = append(scpu, pm.SlackCpu)
 		smemory = append(smemory, pm.SlackMemory)
@@ -308,6 +315,7 @@ func ScheduleMigrateVM(reqparam string) (done bool) {
 		zap.Duration("Time for Heuristic to run", elapsed),
 	)
 	var req pbl.MigrateVMRequest
+	// zap.L().Debug("", zap.Uint32("", len(vmtopm)))
 	for vmno, pmno := range vmtopm {
 		zap.L().Debug("",
 			zap.String("VMId", vmmap[vmno].VMId),
