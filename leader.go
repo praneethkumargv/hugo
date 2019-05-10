@@ -34,11 +34,17 @@ var (
 	pmtovm    sync.Mutex
 	pmstate   sync.Mutex
 	pmmigrate sync.Mutex
-	offqueue  = make(PriorityQueue, 0)
+	// offqueue  = make(PriorityQueue, 0)
 )
 
+type LeaderServer struct {
+	onqueue  PriorityQueue
+	offqueue PriorityQueue
+	client   *clientv3.Client
+}
+
 // Master Hostname should be like "s1" to "s9"
-func Partition(cli *clientv3.Client) {
+func Partition(cli *clientv3.Client, leader *LeaderServer) {
 	// TODO: CHANGE ONLY NO OF PMS WERE ON
 	for {
 		start := time.Now()
@@ -134,7 +140,7 @@ func Partition(cli *clientv3.Client) {
 		}
 
 		zap.L().Debug("Trying to insert all the OFF PM's into Heap for use")
-		offqueue := make(PriorityQueue, 0)
+		leader.offqueue = leader.offqueue[:0]
 		for i, offpm := range arroff {
 			item := &Item{
 				PMId:     keyoff[i],
@@ -143,12 +149,15 @@ func Partition(cli *clientv3.Client) {
 				priority: offpm.Vcpu * offpm.Memory,
 				index:    i,
 			}
-			offqueue = append(offqueue, item)
+			leader.offqueue = append(leader.offqueue, item)
 		}
 		zap.L().Debug("Trying to initiate the Heap with OFF PM's",
-			zap.Int("No of Off PM's", len(offqueue)),
+			zap.Int("No of Off PM's", len(leader.offqueue)),
 		)
-		heap.Init(&offqueue)
+		heap.Init(&leader.offqueue)
+		zap.L().Debug("Trying to initiate the Heap with OFF PM's",
+			zap.Int("No of Off PM's", len(leader.offqueue)),
+		)
 		zap.L().Debug("All OFF PM's are inserted into Heap")
 		muon.Unlock()
 		muoff.Unlock()
@@ -161,12 +170,6 @@ func Partition(cli *clientv3.Client) {
 		time.Sleep(partitionUpdateInterval)
 	}
 
-}
-
-type LeaderServer struct {
-	onqueue  PriorityQueue
-	offqueue PriorityQueue
-	client   *clientv3.Client
 }
 
 func changeStateOfVM(client *clientv3.Client, vmkey string, status pbc.VMStatusResponse_Status) {
@@ -420,23 +423,31 @@ func (leader *LeaderServer) CreateNewVM(ctx context.Context, req *pb.CreateNewVM
 		muoff.Unlock()
 		zap.L().Debug("Unlocked OFF queue")
 
-		muon.Lock()
-		//changing the state of Physical Machine
-		changePhysicalMachineState(leader.client, onPM.PMId, true)
-		zap.L().Debug("Inserting the ONed PM to ON Queue",
-			zap.String("Physical Machine Id", onPM.PMId),
-		)
-		heap.Push(&leader.onqueue, onPM)
-		muon.Unlock()
+		if done == true {
+			zap.L().Debug("Found a OFF PM")
 
-		// changing state of Virtual Machine
-		changeStateOfVM(leader.client, vmid, pbc.VMStatusResponse_CREATING)
+			muon.Lock()
+			//changing the state of Physical Machine
+			if onPM == nil {
+				zap.L().Debug("he")
+			}
+			changePhysicalMachineState(leader.client, onPM.PMId, true)
+			zap.L().Debug("Inserting the ONed PM to ON Queue",
+				zap.String("Physical Machine Id", onPM.PMId),
+			)
+			heap.Push(&leader.onqueue, onPM)
+			muon.Unlock()
 
-		// inserting vm to pm mapping
-		insertVMToPMMapping(leader.client, vmid, onPM.PMId)
+			// changing state of Virtual Machine
+			changeStateOfVM(leader.client, vmid, pbc.VMStatusResponse_CREATING)
 
-		// inserting pm to vm mapping
-		insertPMToVMMapping(leader.client, vmid, onPM.PMId)
+			// inserting vm to pm mapping
+			insertVMToPMMapping(leader.client, vmid, onPM.PMId)
+
+			// inserting pm to vm mapping
+			insertPMToVMMapping(leader.client, vmid, onPM.PMId)
+		}
+
 	}
 	return &pb.CreateNewVMResponse{Accepted: done}, nil
 }
@@ -504,6 +515,7 @@ func heapOperation(client *clientv3.Client, queue *PriorityQueue, resp *pb.State
 	lock.Lock()
 	defer lock.Unlock()
 	length := len(*queue)
+	zap.L().Debug("Length Of Queue", zap.Int("Length", length))
 	for i := uint32(0); i < noofpm && i < uint32(length); i++ {
 		check := heap.Pop(queue).(*Item)
 		temp = append(temp, check)
@@ -515,15 +527,15 @@ func heapOperation(client *clientv3.Client, queue *PriorityQueue, resp *pb.State
 		part.State = state
 
 		// Reading the database here
-		// value := getKeyValue(GetKeyResp(context.Background(), client, part.PMId))
-		// var valueOfPM pbtype.PM
-		// error := proto.Unmarshal([]byte(value), &valueOfPM)
-		// if error != nil {
-		// 	zap.L().Error("Unmarshalling Error", zap.Error(error))
-		// }
+		value := getKeyValue(GetKeyResp(context.Background(), client, part.PMId))
+		var valueOfPM pbtype.PM
+		error := proto.Unmarshal([]byte(value), &valueOfPM)
+		if error != nil {
+			zap.L().Error("Unmarshalling Error", zap.Error(error))
+		}
 
-		// part.CapacityCpu = valueOfPM.Vcpu
-		// part.CapacityMemory = valueOfPM.Memory
+		part.CapacityCpu = valueOfPM.Vcpu
+		part.CapacityMemory = valueOfPM.Memory
 		resp.Pm = append(resp.Pm, &part)
 	}
 
@@ -538,7 +550,11 @@ func (leader *LeaderServer) RetrieveStateChanges(ctx context.Context, req *pb.St
 	offpm := req.NumOff
 	var resp pb.StateResponse
 
+	length := len(leader.onqueue)
+	zap.L().Debug("Length Of Queue", zap.Int("Length", length))
 	heapOperation(leader.client, &leader.onqueue, &resp, true, onpm)
+	length = len(leader.offqueue)
+	zap.L().Debug("Length Of Queue", zap.Int("Length", length))
 	heapOperation(leader.client, &leader.offqueue, &resp, false, offpm)
 	return &resp, nil
 }
@@ -671,7 +687,7 @@ func (leader *LeaderServer) MigrateVM(ctx context.Context, req *pb.MigrateVMRequ
 			temp.priority = temp.scpu * temp.smemory
 			// changing state of Physical Machine
 			changePhysicalMachineState(leader.client, temp.PMId, true)
-			heap.Push(&leader.onqueue, &temp)
+			heap.Push(&leader.onqueue, temp)
 		} else {
 			chaoffpm = append(chaoffpm, temp)
 		}
@@ -704,8 +720,6 @@ func (leader *LeaderServer) MigrateVM(ctx context.Context, req *pb.MigrateVMRequ
 func StartLeaderProcess(cli *clientv3.Client, lead chan bool, hostName, ipaddress string) {
 	zap.L().Info("Leader Process Started")
 	zap.L().Info("Now every master can start sending requests to leader")
-	go Partition(cli)
-
 	//TODO: Poweroff asynchronously also see migrate keys
 
 	zap.L().Info("Trying to start GRPC Server")
@@ -718,7 +732,10 @@ func StartLeaderProcess(cli *clientv3.Client, lead chan bool, hostName, ipaddres
 		)
 	}
 	grpcServer := grpc.NewServer()
-	leaderServer := LeaderServer{onqueue: make(PriorityQueue, 0), offqueue: offqueue, client: cli}
+	leaderServer := LeaderServer{onqueue: make(PriorityQueue, 0), offqueue: make(PriorityQueue, 0), client: cli}
+
+	go Partition(cli, &leaderServer)
+
 	zap.L().Info("Registering GRPC Server")
 	pb.RegisterLeaderServer(grpcServer, &leaderServer)
 	zap.L().Debug("gRPC Server started")

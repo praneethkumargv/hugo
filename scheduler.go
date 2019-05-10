@@ -67,6 +67,18 @@ func RetrievePM(client pbl.LeaderClient) *pbl.StateResponse {
 	if err != nil {
 		zap.L().Error("Error in calling RPC", zap.Error(err))
 	}
+	for _, pm := range pms.Pm {
+		zap.L().Debug("The retrieved PM's are")
+		zap.L().Debug("",
+			zap.String("PMId", pm.PMId),
+			zap.Uint32("Capacity CPU", pm.CapacityCpu),
+			zap.Uint32("Capacity Memory", pm.CapacityMemory),
+			zap.Uint32("SlackCpu", pm.SlackCpu),
+			zap.Uint32("SlackMemory", pm.SlackMemory),
+			zap.Uint32("Number in retrieved pm", pm.Number),
+			zap.Bool("State of PM", pm.State),
+		)
+	}
 	return pms
 }
 
@@ -284,8 +296,8 @@ func ScheduleMigrateVM(reqparam string) (done bool) {
 	var scpu, smemory []uint32
 	vmmap := make(map[int]*pbn.VMStat)
 	pmmap := make(map[int]*pbl.PMInformation)
-	ccpu = value.PM.SlackCpu
-	cmemory = value.PM.SlackMemory
+	ccpu = value.PM.TotalCpu
+	cmemory = value.PM.TotalMemory
 	zap.L().Debug("", zap.Uint32("Capacity CPU", ccpu))
 	zap.L().Debug("", zap.Uint32("Capacity Memory", cmemory))
 
@@ -317,10 +329,18 @@ func ScheduleMigrateVM(reqparam string) (done bool) {
 	var req pbl.MigrateVMRequest
 	// zap.L().Debug("", zap.Uint32("", len(vmtopm)))
 	for vmno, pmno := range vmtopm {
-		zap.L().Debug("",
-			zap.String("VMId", vmmap[vmno].VMId),
-			zap.String("PMId", pmmap[pmno].PMId),
-		)
+		if pmno == 0 {
+			zap.L().Debug("",
+				zap.String("VMId", vmmap[vmno].VMId),
+				zap.String("PMId", value.PM.PMId),
+			)
+		} else {
+			zap.L().Debug("",
+				zap.String("VMId", vmmap[vmno].VMId),
+				zap.String("PMId", pmmap[pmno-1].PMId),
+			)
+		}
+
 		ele := &pbl.CreateNewVMRequest{
 			VMId:    vmmap[vmno].VMId,
 			PMId:    pmmap[pmno].PMId,

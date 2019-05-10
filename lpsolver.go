@@ -92,8 +92,9 @@ func Solve(pcpu []uint32, pmemory []uint32, ccpu uint32, cmem uint32, scpu []uin
 			objfn = append(objfn, a)
 		}
 	}
-	for i := 0; i < noofpm; i++ {
-		objfn = append(objfn, 0)
+	objfn = append(objfn, 0)
+	for i := 1; i < noofpm; i++ {
+		objfn = append(objfn, b)
 	}
 	lp.SetObjFn(objfn)
 	lp.Solve()
@@ -103,7 +104,7 @@ func Solve(pcpu []uint32, pmemory []uint32, ccpu uint32, cmem uint32, scpu []uin
 
 	for i := 0; i < noofvm; i++ {
 		for j := 0; j < noofpm; j++ {
-
+			// zap.L().("", )
 			if vars[i*noofpm+j] == 1 {
 				m[i] = j
 			}
@@ -111,3 +112,34 @@ func Solve(pcpu []uint32, pmemory []uint32, ccpu uint32, cmem uint32, scpu []uin
 	}
 	return m
 }
+
+// func main() {
+
+// 	var fpcpu = []float64{0.0007257, 0.0001993, 0.05243, 0.01752, 0.03925, 0.05762, 0.03497, 0.03961, 0.1078, 0.01859, 0.009425, 0.005539, 0.006706}
+// 	var fpmem = []float64{0.0067905, 0.0024359, 0.02905, 0.016785, 0.02928, 0.02655, 0.014222, 0.02902, 0.02826, 0.009425, 0.004741, 0.13245, 0.12488}
+// 	var ccpu, cmem uint32
+// 	var scpu = []uint32{326262, 442258, 254265}
+// 	var smem = []uint32{808411, 501363, 251155}
+// 	// for i := 0; i < 17; i++ {
+// 	// 	pcpu = append(pcpu, uint32(0.775*float64(1000)))
+// 	// 	pmem = append(pmem, 256)
+// 	// }
+// 	ccpu = uint32(0.5 * float64(1000000))
+// 	cmem = uint32(0.19999 * float64(1000000))
+
+// 	pcpu := make([]uint32, 0)
+// 	pmem := make([]uint32, 0)
+// 	for i, ele := range fpcpu {
+// 		pcpu = append(pcpu, uint32(ele*float64(1000000)))
+// 		pmem = append(pmem, uint32(fpmem[i]*float64(1000000)))
+// 	}
+
+// 	for _, ele := range pcpu {
+// 		fmt.Println(ele)
+// 	}
+
+// 	ans := Solve(pcpu, pmem, ccpu, cmem, scpu, smem)
+// 	for vm, pm := range ans {
+// 		fmt.Println(vm, pm)
+// 	}
+// }
