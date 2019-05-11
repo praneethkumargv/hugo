@@ -185,6 +185,11 @@ func changeStateOfVM(client *clientv3.Client, vmkey string, status pbc.VMStatusR
 	}
 
 	zap.L().Debug("Present Status", zap.Any("Status", temp.Status))
+	// changed here
+	if temp.Status == status {
+		zap.L().Debug("After Status", zap.Any("Status", temp.Status))
+		return
+	}
 	temp.Status = status
 	zap.L().Debug("After Status", zap.Any("Status", temp.Status))
 
@@ -328,6 +333,18 @@ func changePhysicalMachineState(client *clientv3.Client, pmkey string, state boo
 	)
 }
 
+func printElements(queue PriorityQueue) {
+	zap.L().Debug("Printing elements in queue")
+	for _, item := range queue {
+		zap.L().Debug("", zap.String("PMId", item.PMId),
+			zap.Uint32("Slack CPU", item.scpu),
+			zap.Uint32("Slack Memory", item.smemory),
+			zap.Uint32("Priority", item.priority),
+			zap.Int("Index", item.index),
+		)
+	}
+}
+
 func (leader *LeaderServer) CreateNewVM(ctx context.Context, req *pb.CreateNewVMRequest) (*pb.CreateNewVMResponse, error) {
 	var temp []*Item
 
@@ -348,6 +365,7 @@ func (leader *LeaderServer) CreateNewVM(ctx context.Context, req *pb.CreateNewVM
 	zap.L().Debug("Trying to get hold on ONQueue")
 	muon.Lock()
 	zap.L().Debug("Got lock on OnQueue")
+	printElements(leader.onqueue)
 	length := len(leader.onqueue)
 	for i := 0; i < TopOnElements && i < length; i++ {
 		check = heap.Pop(&leader.onqueue).(*Item)
@@ -395,6 +413,7 @@ func (leader *LeaderServer) CreateNewVM(ctx context.Context, req *pb.CreateNewVM
 		zap.L().Debug("Trying to Get Lock on Off queue")
 		muoff.Lock()
 		zap.L().Debug("Locked OFF queue")
+		printElements(leader.offqueue)
 		length := len(leader.offqueue)
 		for i := 0; i < TopOffElements && i < length; i++ {
 			check := heap.Pop(&leader.offqueue).(*Item)
@@ -428,9 +447,6 @@ func (leader *LeaderServer) CreateNewVM(ctx context.Context, req *pb.CreateNewVM
 
 			muon.Lock()
 			//changing the state of Physical Machine
-			if onPM == nil {
-				zap.L().Debug("he")
-			}
 			changePhysicalMachineState(leader.client, onPM.PMId, true)
 			zap.L().Debug("Inserting the ONed PM to ON Queue",
 				zap.String("Physical Machine Id", onPM.PMId),
@@ -514,6 +530,7 @@ func heapOperation(client *clientv3.Client, queue *PriorityQueue, resp *pb.State
 	zap.L().Debug("Trying to Lock the", zap.Bool("Queue Name", state))
 	lock.Lock()
 	defer lock.Unlock()
+	printElements(*queue)
 	length := len(*queue)
 	zap.L().Debug("Length Of Queue", zap.Int("Length", length))
 	for i := uint32(0); i < noofpm && i < uint32(length); i++ {
@@ -572,6 +589,7 @@ func (leader *LeaderServer) SendStateUpdate(ctx context.Context, req *pb.StateUp
 	done := false
 	muon.Lock()
 	defer muon.Unlock()
+	printElements(leader.onqueue)
 	for i, node := range leader.onqueue {
 		if node.PMId == pmid {
 			zap.L().Info("Found the given pmid in ONQueue")
@@ -621,7 +639,9 @@ func (leader *LeaderServer) MigrateVM(ctx context.Context, req *pb.MigrateVMRequ
 	var onpm, offpm []*Item
 	available := make(map[string]Resources)
 	required := make(map[string]Resources)
+	printElements(leader.onqueue)
 	lenOnQueue := len(leader.onqueue)
+	printElements(leader.offqueue)
 	lenOffQueue := len(leader.offqueue)
 	for i := 0; i < TopOnElements && i < lenOnQueue; i++ {
 		check := heap.Pop(&leader.onqueue).(*Item)
@@ -649,21 +669,24 @@ func (leader *LeaderServer) MigrateVM(ctx context.Context, req *pb.MigrateVMRequ
 	allpmidpresent := true
 	for pmid := range required {
 		if _, ok := available[pmid]; !ok {
+			zap.L().Debug("A PMID is not present", zap.String("PMID NOT PRESENT", pmid))
 			allpmidpresent = false
 		}
 	}
 	if allpmidpresent == false {
+		zap.L().Debug("All PMID are not present")
 		return &pb.MigrateVMResponse{Accepted: false}, nil
 	}
-	allocation := true
-	for pmid := range required {
-		if required[pmid].cpu > available[pmid].cpu || required[pmid].memory > available[pmid].memory {
-			allocation = false
-		}
-	}
-	if allocation == false {
-		return &pb.MigrateVMResponse{Accepted: false}, nil
-	}
+	// Is important
+	// allocation := true
+	// for pmid := range required {
+	// 	if required[pmid].cpu > available[pmid].cpu || required[pmid].memory > available[pmid].memory {
+	// 		allocation = false
+	// 	}
+	// }
+	// if allocation == false {
+	// 	return &pb.MigrateVMResponse{Accepted: false}, nil
+	// }
 	var chaonpm, chaoffpm []*Item
 	// only change the priority of those which are present as destinations to migrate
 	for _, temp := range onpm {
