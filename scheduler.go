@@ -329,6 +329,8 @@ func ScheduleMigrateVM(reqparam string) (done bool) {
 	var req pbl.MigrateVMRequest
 	// zap.L().Debug("", zap.Uint32("", len(vmtopm)))
 	for vmno, pmno := range vmtopm {
+
+		// send request of only vm that need to migrate to another pm
 		if pmno == 0 {
 			zap.L().Debug("",
 				zap.String("VMId", vmmap[vmno].VMId),
@@ -339,17 +341,19 @@ func ScheduleMigrateVM(reqparam string) (done bool) {
 				zap.String("VMId", vmmap[vmno].VMId),
 				zap.String("PMId", pmmap[pmno-1].PMId),
 			)
+			ele := &pbl.CreateNewVMRequest{
+				VMId:    vmmap[vmno].VMId,
+				PMId:    pmmap[pmno-1].PMId,
+				Pcpu:    vmmap[vmno].PredictedCpu,
+				Pmemory: vmmap[vmno].PredictedMemory,
+			}
+			req.Assigned = append(req.Assigned, ele)
 		}
-
-		ele := &pbl.CreateNewVMRequest{
-			VMId:    vmmap[vmno].VMId,
-			PMId:    pmmap[pmno].PMId,
-			Pcpu:    vmmap[vmno].PredictedCpu,
-			Pmemory: vmmap[vmno].PredictedMemory,
-		}
-		req.Assigned = append(req.Assigned, ele)
 	}
 	done = SendReqForMigration(client, &req)
+	if done == true {
+		//TODO: SEND REQUEST TO NAPOLET
+	}
 	return
 }
 

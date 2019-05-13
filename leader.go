@@ -536,6 +536,14 @@ func heapOperation(client *clientv3.Client, queue *PriorityQueue, resp *pb.State
 	for i := uint32(0); i < noofpm && i < uint32(length); i++ {
 		check := heap.Pop(queue).(*Item)
 		temp = append(temp, check)
+		//There may be PM's of even zero slack on ON queue
+		if check.scpu == 0 || check.smemory == 0 {
+			zap.L().Debug("Found a PM with zero slack cpu or zero slack memory",
+				zap.Uint32("Slack CPU", check.scpu),
+				zap.Uint32("Slack Memory", check.smemory),
+			)
+			break
+		}
 		var part pb.PMInformation
 		part.PMId = check.PMId
 		part.SlackCpu = check.scpu
@@ -675,18 +683,43 @@ func (leader *LeaderServer) MigrateVM(ctx context.Context, req *pb.MigrateVMRequ
 	}
 	if allpmidpresent == false {
 		zap.L().Debug("All PMID are not present")
+		for _, itemptr := range onpm {
+			heap.Push(&leader.onqueue, itemptr)
+		}
+		for _, itemptr := range offpm {
+			heap.Push(&leader.offqueue, itemptr)
+		}
 		return &pb.MigrateVMResponse{Accepted: false}, nil
 	}
 	// Is important
-	// allocation := true
-	// for pmid := range required {
-	// 	if required[pmid].cpu > available[pmid].cpu || required[pmid].memory > available[pmid].memory {
-	// 		allocation = false
-	// 	}
-	// }
-	// if allocation == false {
-	// 	return &pb.MigrateVMResponse{Accepted: false}, nil
-	// }
+	allocation := true
+	for pmid := range required {
+		if required[pmid].cpu > available[pmid].cpu || required[pmid].memory > available[pmid].memory {
+			zap.L().Debug("", zap.String("PMID", pmid),
+				zap.Uint32("Required CPU", required[pmid].cpu),
+				zap.Uint32("Available CPU", available[pmid].cpu),
+				zap.Uint32("Required Memory", required[pmid].memory),
+				zap.Uint32("Available Memory", available[pmid].memory),
+			)
+			allocation = false
+		}
+		zap.L().Debug("", zap.String("PMID", pmid),
+			zap.Uint32("Required CPU", required[pmid].cpu),
+			zap.Uint32("Available CPU", available[pmid].cpu),
+			zap.Uint32("Required Memory", required[pmid].memory),
+			zap.Uint32("Available Memory", available[pmid].memory),
+		)
+	}
+	if allocation == false {
+		zap.L().Debug("There are no available resources present on the destined PM's")
+		for _, itemptr := range onpm {
+			heap.Push(&leader.onqueue, itemptr)
+		}
+		for _, itemptr := range offpm {
+			heap.Push(&leader.offqueue, itemptr)
+		}
+		return &pb.MigrateVMResponse{Accepted: false}, nil
+	}
 	var chaonpm, chaoffpm []*Item
 	// only change the priority of those which are present as destinations to migrate
 	for _, temp := range onpm {
