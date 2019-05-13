@@ -46,7 +46,7 @@ func Scheduler(cli *clientv3.Client, squeue chan Sched) {
 				}
 			} else if reqtype == "3" {
 				zap.L().Debug("Migrate VM Request")
-				done = ScheduleMigrateVM(reqparam)
+				done = ScheduleMigrateVM(reqparam, cli)
 			}
 			if done == true {
 				break
@@ -271,7 +271,7 @@ func SendDeleteReqToNapolet(client pbn.PingClient, req *pbn.DeleteVMRequest) (do
 	return
 }
 
-func ScheduleMigrateVM(reqparam string) (done bool) {
+func ScheduleMigrateVM(reqparam string, cli *clientv3.Client) (done bool) {
 	var value = new(pbn.Stat)
 	error := proto.Unmarshal([]byte(reqparam), value)
 	if error != nil {
@@ -280,6 +280,7 @@ func ScheduleMigrateVM(reqparam string) (done bool) {
 	zap.L().Debug("Scheduled to Migrate VM's in PM",
 		zap.String("Physical Machine Id", value.PM.PMId),
 	)
+	srcpmid := value.PM.PMId
 	// mu.RLock()
 	zap.L().Debug("Making connection with Leader")
 	conn, err := grpc.Dial(leader+":"+fmt.Sprintf("%d", LeaderPort), grpc.WithInsecure())
@@ -311,6 +312,8 @@ func ScheduleMigrateVM(reqparam string) (done bool) {
 		pmemory = append(pmemory, vm.PredictedMemory)
 	}
 	zap.L().Debug("The retrieved PM's are")
+	noofonpms := 0
+	noofoffpms := 0
 	for i, pm := range pms.Pm {
 		zap.L().Debug("", zap.String("PMId", pm.PMId))
 		zap.L().Debug("", zap.Uint32("Slack CPU", pm.SlackCpu))
@@ -318,10 +321,15 @@ func ScheduleMigrateVM(reqparam string) (done bool) {
 		pmmap[i] = pm
 		scpu = append(scpu, pm.SlackCpu)
 		smemory = append(smemory, pm.SlackMemory)
+		if pm.State == true {
+			noofonpms++
+		} else if pm.State == false {
+			noofoffpms++
+		}
 	}
 	zap.L().Debug("Trying to solving the problem with the given heuristic")
 	start := time.Now()
-	vmtopm := Solve(pcpu, pmemory, ccpu, cmemory, scpu, smemory)
+	vmtopm := Solve(pcpu, pmemory, ccpu, cmemory, scpu, smemory, noofonpms, noofoffpms)
 	elapsed := time.Since(start)
 	zap.L().Info("Time elapsed for algorithm is ",
 		zap.Duration("Time for Heuristic to run", elapsed),
@@ -353,6 +361,56 @@ func ScheduleMigrateVM(reqparam string) (done bool) {
 	done = SendReqForMigration(client, &req)
 	if done == true {
 		//TODO: SEND REQUEST TO NAPOLET
+		for _, request := range req.Assigned {
+			pmid := request.PMId
+			reqparam := getKeyValue(GetKeyResp(context.Background(), cli, pmid))
+			var value = new(pbt.PM)
+			error := proto.Unmarshal([]byte(reqparam), value)
+			if error != nil {
+				zap.L().Error("Unmarshalling Error", zap.Error(error))
+			}
+			migreq := &pbn.MigrateVMRequest{
+				VMId:      request.VMId,
+				IPAddress: value.Ipaddress,
+			}
+
+			keyvalue := getKeyValue(GetKeyResp(context.Background(), cli, srcpmid))
+			var temp pbt.PM
+			error = proto.Unmarshal([]byte(keyvalue), &temp)
+			if error != nil {
+				zap.L().Error("Unmarshalling Error", zap.Error(error))
+			}
+			zap.L().Debug("Trying to connect with napolet")
+			conn, err := grpc.Dial(temp.Ipaddress, grpc.WithInsecure())
+			if err != nil {
+				zap.L().Error("Failed to dial", zap.Error(err))
+			}
+			zap.L().Debug("Connected with napolet")
+			defer conn.Close()
+			client := pbn.NewPingClient(conn)
+			SendMigrateReqToNapolet(client, migreq)
+		}
+	}
+	return
+}
+
+func SendMigrateReqToNapolet(client pbn.PingClient, req *pbn.MigrateVMRequest) (done bool) {
+	zap.L().Debug("Contacting napolet For Conformation Migration")
+	ctx, cancel := context.WithTimeout(context.Background(), ContextTimeout)
+	defer cancel()
+	resp, err := client.MigrateVM(ctx, req)
+	if err != nil {
+		zap.L().Error("Error in calling RPC", zap.Error(err))
+	}
+	done = resp.Accepted
+	if done == true {
+		zap.L().Debug("Migrate Request Accepted by Napolet",
+			zap.String("Virtual Machine", req.VMId),
+		)
+	} else {
+		zap.L().Debug("Migrate Request Not Accepted by Napolet",
+			zap.String("Virtual Machine", req.VMId),
+		)
 	}
 	return
 }

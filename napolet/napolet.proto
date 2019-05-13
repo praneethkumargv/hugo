@@ -4,6 +4,7 @@ service Ping{
     rpc CreateVM(CreateVMRequest) returns(CreateVMResponse){}
     rpc DeleteVM(DeleteVMRequest) returns(DeleteVMResponse){}
     rpc GetStat(Dummy) returns(Stat){}
+    rpc MigrateVM(MigrateVMRequest) returns(MigrateVMResponse){}
 }
 
 message Dummy{
@@ -50,4 +51,13 @@ message PMStat{
 message Stat{
     PMStat PM = 1;
     repeated VMStat VMS = 2;
+}
+
+message MigrateVMRequest{
+    string VMId = 1;
+    string IPAddress = 2;
+}
+
+message MigrateVMResponse{
+    bool accepted = 1;
 }

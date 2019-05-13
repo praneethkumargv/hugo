@@ -8,6 +8,7 @@ import (
 	pbc "napoleon/controller"
 	pbl "napoleon/leader"
 	pb "napoleon/napolet"
+	pbtype "napoleon/types"
 
 	"github.com/golang/protobuf/proto"
 	clientv3 "go.etcd.io/etcd/clientv3"
@@ -147,6 +148,32 @@ func TalkToNapolet(cli *clientv3.Client, tunnel chan string, squeue chan Sched) 
 			zap.L().Debug("Changing the state of VM depending upon Stat from Napolet",
 				zap.String("VMId", vm.VMId),
 			)
+			// for changing state of migrating vm
+			value := getKeyValue(GetKeyResp(context.Background(), cli, vm.VMId))
+			var temp pbc.VMStatusResponse
+			error := proto.Unmarshal([]byte(value), &temp)
+			if error != nil {
+				zap.L().Error("Unmarshalling Error", zap.Error(error))
+			}
+			// get src PM
+			value = getKeyValue(GetKeyResp(context.Background(), cli, vm.VMId+"_on"))
+
+			if temp.Status == pbc.VMStatusResponse_MIGRATING {
+				// change vm to pm mapping
+				insertVMToPMMapping(cli, vm.VMId, stat.PM.PMId)
+				// delete vm on pm src
+				DeleteVMOnPM(cli, vm.VMId, value)
+				// add vm on pm del
+				insertPMToVMMapping(cli, vm.VMId, stat.PM.PMId)
+				// delete vm migrating key
+				destpmid := getKeyValue(GetKeyResp(context.Background(), cli, "migrating_"+vm.VMId))
+				DeleteVMToPMMappingMigrating(cli, vm.VMId)
+				// delete pm on migrating key
+				DeletePMToVMMappingMigrating(cli, vm.VMId, destpmid)
+				// change state of vm
+				changeStateOfVM(cli, vm.VMId, pbc.VMStatusResponse_CREATED)
+			}
+
 			if vm.State == "Created" {
 				changeStateOfVM(cli, vm.VMId, pbc.VMStatusResponse_CREATED)
 			} else if vm.State == "Suspended" {
@@ -155,4 +182,105 @@ func TalkToNapolet(cli *clientv3.Client, tunnel chan string, squeue chan Sched) 
 		}
 		InformLeader(stat, squeue)
 	}
+}
+
+func DeleteVMOnPM(cli *clientv3.Client, vmid, pmkey string) {
+	zap.L().Debug("Trying to delete Migrated VM mapping on Source PM",
+		zap.String("VMID", vmid),
+		zap.String("PMID", pmkey),
+	)
+	var list pbtype.VMONPM
+	key := "on_" + pmkey
+
+	// Because another thread can be changing the pm to vm mapping
+	// TODO: LOCKING ON KEY LEVEL SHOULD BE DONE
+	pmtovm.Lock()
+	defer pmtovm.Unlock()
+	resp := GetKeyResp(context.Background(), cli, key)
+	if isKeyPresent(resp) {
+		value := getKeyValue(resp)
+		error := proto.Unmarshal([]byte(value), &list)
+		if error != nil {
+			zap.L().Error("Unmarshalling Error", zap.Error(error))
+		}
+		// list.VMId = append(list.VMId, vmkey)
+		for i, targetVMId := range list.VMId {
+			if targetVMId == vmid {
+				// removing the target vmid
+				list.VMId = append(list.VMId[:i], list.VMId[i+1:]...)
+				break
+			}
+		}
+	}
+
+	out, err := proto.Marshal(&list)
+	if err != nil {
+		zap.L().Error("Marshalling Error", zap.Error(err))
+	}
+	value := string(out)
+	getResp := InsertKey(cli, key, value)
+	zap.L().Debug("The returned response is", zap.Any("Response", getResp))
+	zap.L().Info("Key is inserted",
+		zap.String("Key", key),
+	)
+}
+
+func DeleteVMToPMMappingMigrating(cli *clientv3.Client, vmid string) {
+	zap.L().Debug("Deleting VM to PM Migrating Relation",
+		zap.String("Virtual machine Id", vmid),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), ContextTimeout)
+	defer cancel()
+	key := "migrating_" + vmid
+	// count keys about to be deleted
+	gresp, err := cli.Get(ctx, key)
+	if err != nil {
+		zap.L().Error("Get error", zap.Error(err))
+	}
+
+	// delete the keys
+	dresp, err := cli.Delete(ctx, key)
+	if err != nil {
+		zap.L().Error("Delete error", zap.Error(err))
+	}
+
+	zap.L().Info("Deleted all keys:", zap.Bool("Value", int64(len(gresp.Kvs)) == dresp.Deleted))
+}
+
+func DeletePMToVMMappingMigrating(cli *clientv3.Client, vmkey, pmkey string) {
+	zap.L().Debug("Deleting relation between PM to VM for migrating",
+		zap.String("Physical Machine Id", pmkey),
+		zap.String("Virtual machine Id", vmkey),
+	)
+	var list pbtype.VMONPM
+	key := "migrating_" + pmkey
+	pmmigrate.Lock()
+	defer pmmigrate.Unlock()
+	resp := GetKeyResp(context.Background(), cli, key)
+	if isKeyPresent(resp) {
+		value := getKeyValue(resp)
+		error := proto.Unmarshal([]byte(value), &list)
+		if error != nil {
+			zap.L().Error("Unmarshalling Error", zap.Error(error))
+		}
+		//list.VMId = append(list.VMId, vmkey)
+		for i, targetVMId := range list.VMId {
+			if targetVMId == vmkey {
+				// removing the target vmid
+				list.VMId = append(list.VMId[:i], list.VMId[i+1:]...)
+				break
+			}
+		}
+	}
+
+	out, err := proto.Marshal(&list)
+	if err != nil {
+		zap.L().Error("Marshalling Error", zap.Error(err))
+	}
+	value := string(out)
+	getResp := InsertKey(cli, key, value)
+	zap.L().Debug("The returned response is", zap.Any("Response", getResp))
+	zap.L().Info("Key is inserted",
+		zap.String("Key", key),
+	)
 }

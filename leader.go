@@ -271,7 +271,7 @@ func insertPMToVMMapping(client *clientv3.Client, vmkey string, pmkey string) {
 }
 
 func insertPMToVMMappingMigrating(client *clientv3.Client, vmkey string, pmkey string) {
-	zap.L().Debug("Inserting relation between VM to PM for migating",
+	zap.L().Debug("Inserting relation between PM to VM for migating",
 		zap.String("Physical Machine Id", pmkey),
 		zap.String("Virtual machine Id", vmkey),
 	)
