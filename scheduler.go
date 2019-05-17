@@ -112,10 +112,17 @@ func ScheduleCreateVM(reqparam string, cli *clientv3.Client) (done bool) {
 	// TODO: READERS AND WRITERS LOCK FOR LEADER
 	// mu.RLock()
 	zap.L().Debug("Making connection with Leader")
-	conn, err := grpc.Dial(leader+":"+fmt.Sprintf("%d", LeaderPort), grpc.WithInsecure())
-	// mu.RUnlock()
-	if err != nil {
-		zap.L().Error("Failed to dial", zap.Error(err))
+	var conn *grpc.ClientConn
+	for {
+		conn, error = grpc.Dial(leader+":"+fmt.Sprintf("%d", LeaderPort), grpc.WithInsecure())
+		// mu.RUnlock()
+		if error != nil {
+			zap.L().Error("Failed to dial", zap.Error(error))
+			time.Sleep(5 * time.Second)
+		} else {
+
+			break
+		}
 	}
 	zap.L().Debug("Leader Connected")
 	defer conn.Close()
@@ -215,10 +222,17 @@ func ScheduleDeleteVM(reqparam string, cli *clientv3.Client) (done bool) {
 	}
 	// mu.RLock()
 	zap.L().Debug("Making connection with Leader")
-	conn, err := grpc.Dial(leader+":"+fmt.Sprintf("%d", LeaderPort), grpc.WithInsecure())
-	// mu.RUnlock()
-	if err != nil {
-		zap.L().Error("Failed to dial", zap.Error(err))
+
+	var conn *grpc.ClientConn
+	for {
+		conn, error = grpc.Dial(leader+":"+fmt.Sprintf("%d", LeaderPort), grpc.WithInsecure())
+		// mu.RUnlock()
+		if error != nil {
+			zap.L().Error("Failed to dial", zap.Error(error))
+			time.Sleep(5 * time.Second)
+		} else {
+			break
+		}
 	}
 	zap.L().Debug("Leader Connected")
 	defer conn.Close()
@@ -283,11 +297,19 @@ func ScheduleMigrateVM(reqparam string, cli *clientv3.Client) (done bool) {
 	srcpmid := value.PM.PMId
 	// mu.RLock()
 	zap.L().Debug("Making connection with Leader")
-	conn, err := grpc.Dial(leader+":"+fmt.Sprintf("%d", LeaderPort), grpc.WithInsecure())
-	// mu.RUnlock()
-	if err != nil {
-		zap.L().Error("Failed to dial", zap.Error(err))
+
+	var conn *grpc.ClientConn
+	for {
+		conn, error = grpc.Dial(leader+":"+fmt.Sprintf("%d", LeaderPort), grpc.WithInsecure())
+		// mu.RUnlock()
+		if error != nil {
+			zap.L().Error("Failed to dial", zap.Error(error))
+			time.Sleep(5 * time.Second)
+		} else {
+			break
+		}
 	}
+
 	zap.L().Debug("Leader Connected")
 	defer conn.Close()
 	client := pbl.NewLeaderClient(conn)

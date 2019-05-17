@@ -20,13 +20,14 @@ const (
 )
 
 var ControllerPort, noOfReadRPCs int
-var hostName, ipaddress string
+var hostName, ipaddress, logname string
 
 func init() {
 	flag.IntVar(&ControllerPort, "cport", 8080, "Controller Port For CRUD Operations")
 	flag.IntVar(&noOfReadRPCs, "rpc", 1, "To talk to napolets")
 	flag.StringVar(&hostName, "name", "s1", "Host Name for Partition")
 	flag.StringVar(&ipaddress, "ip", "localhost", "Ipaddress to host")
+	flag.StringVar(&logname, "log", "controller", "Where to store the log")
 	flag.Parse()
 }
 
@@ -142,7 +143,7 @@ func SelectLeader(cli *clientv3.Client, hostName string, pipe, lead chan bool, i
 func NewLogger() (*zap.Logger, error) {
 	cfg := zap.NewDevelopmentConfig()
 	cfg.OutputPaths = []string{
-		"/home/praneeth/go/src/napoleon/controller.log",
+		"/home/praneeth/go/src/napoleon/" + logname + ".log",
 	}
 	return cfg.Build()
 }

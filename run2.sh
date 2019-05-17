@@ -1,1 +1,1 @@
-napoleon -cport 8078 -rpc 1 -name=s2 -ip=localhost
+napoleon -cport 8078 -rpc 1 -name=s2 -ip=localhost -log=controller2
